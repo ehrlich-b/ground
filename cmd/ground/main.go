@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ehrlich-b/ground/internal/api"
 	"github.com/ehrlich-b/ground/internal/client"
 	"github.com/ehrlich-b/ground/internal/db"
 	"github.com/ehrlich-b/ground/internal/embed"
 	"github.com/ehrlich-b/ground/internal/engine"
+	"github.com/ehrlich-b/ground/internal/model"
 	"github.com/spf13/cobra"
 )
 
@@ -133,9 +135,47 @@ func addTopicCmd() *cobra.Command {
 		Use:   "add-topic",
 		Short: "Add a topic for agents to evaluate",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			dbPath, _ := cmd.Flags().GetString("db")
+			title, _ := cmd.Flags().GetString("title")
+			description, _ := cmd.Flags().GetString("description")
+			if title == "" {
+				return fmt.Errorf("--title is required")
+			}
+
+			store, err := openDB(dbPath)
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+
+			embedder, err := embed.NewOpenAI()
+			if err != nil {
+				return fmt.Errorf("init embedder: %w", err)
+			}
+
+			vec, err := embedder.Embed(title + ": " + description)
+			if err != nil {
+				return fmt.Errorf("embed: %w", err)
+			}
+
+			slug := slugify(title)
+			desc := description
+			topic := &model.Topic{
+				ID:          fmt.Sprintf("%d", time.Now().UnixNano()),
+				Title:       title,
+				Slug:        slug,
+				Description: &desc,
+				Embedding:   embed.MarshalVector(vec),
+			}
+			if err := store.CreateTopic(topic); err != nil {
+				return fmt.Errorf("create topic: %w", err)
+			}
+
+			fmt.Printf("created topic: %s (slug: %s)\n", title, slug)
+			return nil
 		},
 	}
+	cmd.Flags().String("db", "ground.db", "Database path")
 	cmd.Flags().String("title", "", "Topic title")
 	cmd.Flags().String("description", "", "Topic description")
 	return cmd
@@ -160,9 +200,29 @@ func adjudicateCmd() *cobra.Command {
 		Use:   "adjudicate",
 		Short: "Rule on a claim — lock it as settled truth or falsehood",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			dbPath, _ := cmd.Flags().GetString("db")
+			claimID, _ := cmd.Flags().GetString("claim-id")
+			value, _ := cmd.Flags().GetFloat64("value")
+			reasoning, _ := cmd.Flags().GetString("reasoning")
+			if claimID == "" {
+				return fmt.Errorf("--claim-id is required")
+			}
+
+			store, err := openDB(dbPath)
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+
+			if err := store.AdjudicateClaim(claimID, value, "admin", reasoning); err != nil {
+				return fmt.Errorf("adjudicate: %w", err)
+			}
+
+			fmt.Printf("adjudicated claim %s = %.1f\n", claimID, value)
+			return nil
 		},
 	}
+	cmd.Flags().String("db", "ground.db", "Database path")
 	cmd.Flags().String("claim-id", "", "Claim to adjudicate")
 	cmd.Flags().Float64("value", 1.0, "Adjudicated value (1.0 = true, 0.0 = false)")
 	cmd.Flags().String("reasoning", "", "Why this is being adjudicated")
@@ -170,13 +230,60 @@ func adjudicateCmd() *cobra.Command {
 }
 
 func cascadeCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "cascade",
 		Short: "Run cascade analysis on dependency-threatened claims",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			dbPath, _ := cmd.Flags().GetString("db")
+			store, err := openDB(dbPath)
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+
+			claims, err := store.ListAllClaims()
+			if err != nil {
+				return err
+			}
+
+			found := 0
+			for _, c := range claims {
+				if c.Status == "adjudicated" {
+					continue
+				}
+				deps, _ := store.ListDependenciesByClaim(c.ID)
+				for _, d := range deps {
+					dep, err := store.GetClaim(d.DependsOnID)
+					if err != nil {
+						continue
+					}
+					if dep.EffectiveGroundedness < 0.5 && d.Strength > 0.5 {
+						prop := c.Proposition
+						if len(prop) > 60 {
+							prop = prop[:57] + "..."
+						}
+						depProp := dep.Proposition
+						if len(depProp) > 40 {
+							depProp = depProp[:37] + "..."
+						}
+						fmt.Printf("THREATENED: %s\n", prop)
+						fmt.Printf("  depends on [%.2f groundedness]: %s\n", dep.EffectiveGroundedness, depProp)
+						fmt.Printf("  strength: %.2f\n\n", d.Strength)
+						found++
+					}
+				}
+			}
+
+			if found == 0 {
+				fmt.Println("no dependency-threatened claims found")
+			} else {
+				fmt.Printf("%d threatened dependencies found\n", found)
+			}
+			return nil
 		},
 	}
+	cmd.Flags().String("db", "ground.db", "Database path")
+	return cmd
 }
 
 func statusCmd() *cobra.Command {
@@ -625,4 +732,21 @@ func openDB(path string) (*db.Store, error) {
 func printJSON(v any) {
 	data, _ := json.MarshalIndent(v, "", "  ")
 	fmt.Println(string(data))
+}
+
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	s = strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			return r
+		}
+		if r == ' ' || r == '-' || r == '_' {
+			return '-'
+		}
+		return -1
+	}, s)
+	for strings.Contains(s, "--") {
+		s = strings.ReplaceAll(s, "--", "-")
+	}
+	return strings.Trim(s, "-")
 }
