@@ -455,10 +455,10 @@ func runAgent(agent SeedAgent, cfg SeedConfig, taskTemplate string) error {
 	cmd := exec.Command("claude",
 		"--model", model,
 		"-p", fullPrompt,
-		"--allowedTools", "Bash",
+		"--permission-mode", "bypassPermissions",
 	)
 
-	// Set HOME for agent credentials, add ground binary to PATH
+	// Set GROUND_HOME for agent credentials (avoids clobbering HOME which claude needs)
 	groundBin := cfg.GroundBin
 	if groundBin == "" {
 		groundBin = "ground"
@@ -467,7 +467,7 @@ func runAgent(agent SeedAgent, cfg SeedConfig, taskTemplate string) error {
 	if groundDir == "." {
 		groundDir = ""
 	}
-	env := append(os.Environ(), "HOME="+agentHome)
+	env := append(os.Environ(), "GROUND_HOME="+agentHome)
 	if groundDir != "" {
 		env = append(env, "PATH="+groundDir+":"+os.Getenv("PATH"))
 	}

@@ -24,6 +24,10 @@ type Config struct {
 }
 
 func configDir() string {
+	// GROUND_HOME overrides config location (used by seed agents to avoid clobbering HOME)
+	if dir := os.Getenv("GROUND_HOME"); dir != "" {
+		return filepath.Join(dir, ".ground")
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".ground")
 }

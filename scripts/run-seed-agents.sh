@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Run 12 seed agents against ground.ehrlich.dev
@@ -98,10 +98,10 @@ $task"
 
         # Run claude -p in background with HOME set to agent workspace
         (
-            PATH="/tmp/ground-seed:$PATH" HOME="$agent_home" claude \
+            PATH="/tmp/ground-seed:$PATH" GROUND_HOME="$agent_home" claude \
                 --model sonnet \
                 -p "$full_prompt" \
-                --allowedTools Bash \
+                --permission-mode bypassPermissions \
                 > "$log_file" 2>&1
             echo "[round $round_num] $agent finished (exit $?)"
         ) &
