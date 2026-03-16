@@ -75,7 +75,16 @@ run_round() {
     local pids=()
     local running=0
 
+    local checkpoint_dir="$AGENTS_DIR/.checkpoints"
+    mkdir -p "$checkpoint_dir"
+
     for agent in "${AGENTS[@]}"; do
+        # Skip if already completed this round
+        if [ -f "$checkpoint_dir/r${round_num}-${agent}.done" ]; then
+            echo "[round $round_num] $agent already done, skipping"
+            continue
+        fi
+
         # Build the full prompt
         local personality
         personality=$(cat "$REPO/prompts/$agent.md")
@@ -96,21 +105,24 @@ $task"
 
         echo "[round $round_num] starting $agent..."
 
-        # Run claude -p in background with HOME set to agent workspace
+        # Run claude -p in background
         (
             PATH="/tmp/ground-seed:$PATH" GROUND_HOME="$agent_home" claude \
                 --model sonnet \
                 -p "$full_prompt" \
                 --permission-mode bypassPermissions \
                 > "$log_file" 2>&1
-            echo "[round $round_num] $agent finished (exit $?)"
+            local exit_code=$?
+            if [ $exit_code -eq 0 ]; then
+                touch "$checkpoint_dir/r${round_num}-${agent}.done"
+            fi
+            echo "[round $round_num] $agent finished (exit $exit_code)"
         ) &
         pids+=($!)
         running=$((running + 1))
 
         # Throttle to CONCURRENCY
         if [ "$running" -ge "$CONCURRENCY" ]; then
-            # Wait for any one to finish
             wait -n "${pids[@]}" 2>/dev/null || true
             running=$((running - 1))
         fi
