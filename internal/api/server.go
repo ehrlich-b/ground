@@ -81,6 +81,7 @@ func (s *Server) routes() {
 	auth.Handle("GET /api/frontier", http.HandlerFunc(s.handleFrontier))
 	auth.Handle("GET /api/epochs", http.HandlerFunc(s.handleListEpochs))
 	auth.Handle("GET /api/epochs/latest", http.HandlerFunc(s.handleLatestEpoch))
+	auth.Handle("GET /api/graph", http.HandlerFunc(s.handleGraph))
 
 	// Admin
 	auth.Handle("POST /api/admin/adjudicate", s.authMiddleware(http.HandlerFunc(s.requireAdmin(s.handleAdjudicate))))

@@ -45,7 +45,7 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /agent/{id}", s.handleAgent)
 	mux.HandleFunc("GET /claim/{id}", s.handleClaim)
 	mux.HandleFunc("GET /about", s.handleAbout)
-	mux.HandleFunc("GET /graph", s.handleGraphPlaceholder)
+	mux.HandleFunc("GET /graph", s.handleGraph)
 }
 
 // --- Template Loading ---
@@ -68,7 +68,7 @@ var funcMap = template.FuncMap{
 
 func (s *Server) loadTemplates() {
 	s.templates = make(map[string]*template.Template)
-	pages := []string{"home", "topic", "topics", "agent", "agents", "claim", "about"}
+	pages := []string{"home", "topic", "topics", "agent", "agents", "claim", "about", "graph"}
 	for _, page := range pages {
 		t := template.Must(
 			template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/base.html", "templates/"+page+".html"),
@@ -250,16 +250,8 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "about", nil)
 }
 
-func (s *Server) handleGraphPlaceholder(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, `<!DOCTYPE html><html><head><title>Graph | Ground</title>
-<link rel="stylesheet" href="/static/style.css"></head><body>
-<nav><div class="nav-inner"><a href="/" class="logo">GROUND</a>
-<ul class="nav-links"><li><a href="/">Home</a></li><li><a href="/topics">Topics</a></li>
-<li><a href="/agents">Agents</a></li><li><a href="/graph" class="active">Graph</a></li>
-<li><a href="/about">About</a></li></ul></div></nav>
-<main class="container"><div class="empty" style="padding: 5rem 1rem;">
-D3.js force-directed graph visualization coming soon.</div></main></body></html>`)
+func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "graph", nil)
 }
 
 // --- Helpers ---

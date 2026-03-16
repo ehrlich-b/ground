@@ -904,6 +904,119 @@ func (s *Server) handleCascade(w http.ResponseWriter, r *http.Request) {
 	writeData(w, http.StatusOK, map[string]any{"threatened_claims": threatened})
 }
 
+// --- Graph ---
+
+func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
+	type graphNode struct {
+		ID     string  `json:"id"`
+		Label  string  `json:"label"`
+		Type   string  `json:"type"`
+		Value  float64 `json:"value"`
+		Status string  `json:"status,omitempty"`
+		Stance string  `json:"stance,omitempty"`
+	}
+	type graphLink struct {
+		Source string  `json:"source"`
+		Target string  `json:"target"`
+		Type   string  `json:"type"`
+		Value  float64 `json:"value"`
+		Stance string  `json:"stance,omitempty"`
+	}
+
+	var nodes []graphNode
+	var links []graphLink
+
+	// Topics
+	topics, _ := s.store.ListTopics()
+	topicEmbeddings := make(map[string][]float32)
+	for _, t := range topics {
+		nodes = append(nodes, graphNode{
+			ID:    "t:" + t.ID,
+			Label: t.Title,
+			Type:  "topic",
+			Value: 1.0,
+		})
+		if len(t.Embedding) > 0 {
+			topicEmbeddings[t.ID] = embed.UnmarshalVector(t.Embedding)
+		}
+	}
+
+	// Claims
+	claims, _ := s.store.ListAllClaims()
+	for _, c := range claims {
+		nodes = append(nodes, graphNode{
+			ID:     "c:" + c.ID,
+			Label:  c.Proposition,
+			Type:   "claim",
+			Value:  c.EffectiveGroundedness,
+			Status: c.Status,
+		})
+
+		// Link claim to nearest topic
+		if len(c.Embedding) > 0 {
+			claimVec := embed.UnmarshalVector(c.Embedding)
+			if len(claimVec) > 0 {
+				var bestID string
+				var bestSim float64
+				for tID, tVec := range topicEmbeddings {
+					sim := embed.CosineSimilarity(claimVec, tVec)
+					if sim > bestSim {
+						bestSim = sim
+						bestID = tID
+					}
+				}
+				if bestSim > 0.3 && bestID != "" {
+					links = append(links, graphLink{
+						Source: "c:" + c.ID,
+						Target: "t:" + bestID,
+						Type:   "proximity",
+						Value:  bestSim,
+					})
+				}
+			}
+		}
+	}
+
+	// Agents
+	agents, _ := s.store.ListAgents()
+	for _, a := range agents {
+		nodes = append(nodes, graphNode{
+			ID:    "a:" + a.ID,
+			Label: a.Name,
+			Type:  "agent",
+			Value: a.Weight,
+		})
+	}
+
+	// Dependencies
+	deps, _ := s.store.ListAllDependencies()
+	for _, d := range deps {
+		links = append(links, graphLink{
+			Source: "c:" + d.ClaimID,
+			Target: "c:" + d.DependsOnID,
+			Type:   "dependency",
+			Value:  d.Strength,
+		})
+	}
+
+	// Assertions
+	assertions, _ := s.store.ListAllAssertions()
+	for _, a := range assertions {
+		links = append(links, graphLink{
+			Source: "a:" + a.AgentID,
+			Target: "c:" + a.ClaimID,
+			Type:   "assertion",
+			Value:  a.Confidence,
+			Stance: a.Stance,
+		})
+	}
+
+	writeData(w, http.StatusOK, map[string]any{
+		"nodes": nodes,
+		"links": links,
+	})
+}
+
 // --- Helpers ---
 
 func generateID() string {
