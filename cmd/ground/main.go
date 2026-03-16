@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/ehrlich-b/ground/internal/api"
+	"github.com/ehrlich-b/ground/internal/client"
 	"github.com/ehrlich-b/ground/internal/db"
 	"github.com/ehrlich-b/ground/internal/embed"
 	"github.com/ehrlich-b/ground/internal/engine"
@@ -259,14 +262,39 @@ func runStatus(cmd *cobra.Command) error {
 // --- Client Commands ---
 
 func loginCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "login [url]",
 		Short: "Authenticate against a remote Ground instance",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			url := args[0]
+			name, _ := cmd.Flags().GetString("name")
+			if name == "" {
+				return fmt.Errorf("--name is required for registration")
+			}
+
+			c := client.NewWithConfig(url, "")
+			result, err := c.Register(name)
+			if err != nil {
+				return fmt.Errorf("register: %w", err)
+			}
+
+			data, _ := result["data"].(map[string]any)
+			token, _ := data["token"].(string)
+			agent, _ := data["agent"].(map[string]any)
+			agentID, _ := agent["id"].(string)
+
+			if err := client.SaveConfig(&client.Config{URL: url, Token: token}); err != nil {
+				return fmt.Errorf("save config: %w", err)
+			}
+
+			fmt.Printf("logged in as %s (id: %s)\n", name, agentID)
+			fmt.Printf("config saved to ~/.ground/config.json\n")
+			return nil
 		},
 	}
+	cmd.Flags().String("name", "", "Agent name for registration")
+	return cmd
 }
 
 func whoamiCmd() *cobra.Command {
@@ -274,7 +302,18 @@ func whoamiCmd() *cobra.Command {
 		Use:   "whoami",
 		Short: "Show your agent profile and scores",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			c, err := client.New()
+			if err != nil {
+				return err
+			}
+			// Parse the agent ID from the saved token
+			cfg, _ := client.LoadConfig()
+			_ = cfg
+			// For now, just show config info
+			fmt.Printf("url:   %s\n", cfg.URL)
+			fmt.Printf("token: %s...%s\n", cfg.Token[:8], cfg.Token[len(cfg.Token)-8:])
+			_ = c
+			return nil
 		},
 	}
 }
@@ -284,7 +323,29 @@ func exploreCmd() *cobra.Command {
 		Use:   "explore",
 		Short: "Browse topics, contested claims, frontier",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			c, err := client.New()
+			if err != nil {
+				return err
+			}
+
+			fmt.Println("=== Topics ===")
+			topics, err := c.ListTopics()
+			if err == nil {
+				printJSON(topics)
+			}
+
+			fmt.Println("\n=== Most Contested ===")
+			contested, err := c.Contested(5)
+			if err == nil {
+				printJSON(contested)
+			}
+
+			fmt.Println("\n=== Frontier ===")
+			frontier, err := c.Frontier(5)
+			if err == nil {
+				printJSON(frontier)
+			}
+			return nil
 		},
 	}
 }
@@ -295,14 +356,38 @@ func claimCmd() *cobra.Command {
 		Short: "Create a new claim",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			c, err := client.New()
+			if err != nil {
+				return err
+			}
+
+			topic, _ := cmd.Flags().GetString("topic")
+			confidence, _ := cmd.Flags().GetFloat64("confidence")
+			reasoning, _ := cmd.Flags().GetString("reasoning")
+			sources, _ := cmd.Flags().GetStringSlice("source")
+
+			req := map[string]any{
+				"proposition": args[0],
+				"topic_slug":  topic,
+				"confidence":  confidence,
+				"reasoning":   reasoning,
+			}
+			if len(sources) > 0 {
+				req["sources"] = strings.Join(sources, "\n")
+			}
+
+			result, err := c.CreateClaim(req)
+			if err != nil {
+				return fmt.Errorf("create claim: %w", err)
+			}
+			printJSON(result)
+			return nil
 		},
 	}
 	cmd.Flags().String("topic", "", "Topic slug")
 	cmd.Flags().Float64("confidence", 0.7, "Confidence level (0-1)")
 	cmd.Flags().String("reasoning", "", "Why you believe this")
 	cmd.Flags().StringSlice("source", nil, "Source URLs (repeatable)")
-	cmd.Flags().StringSlice("depends-on", nil, "Dependencies as claim-id:strength (repeatable)")
 	return cmd
 }
 
@@ -312,7 +397,32 @@ func assertCmd() *cobra.Command {
 		Short: "Support, contest, or refine a claim",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			c, err := client.New()
+			if err != nil {
+				return err
+			}
+
+			stance, _ := cmd.Flags().GetString("stance")
+			confidence, _ := cmd.Flags().GetFloat64("confidence")
+			reasoning, _ := cmd.Flags().GetString("reasoning")
+			refinedProp, _ := cmd.Flags().GetString("refined-proposition")
+
+			req := map[string]any{
+				"claim_id":   args[0],
+				"stance":     stance,
+				"confidence": confidence,
+				"reasoning":  reasoning,
+			}
+			if refinedProp != "" {
+				req["refined_proposition"] = refinedProp
+			}
+
+			result, err := c.CreateAssertion(req)
+			if err != nil {
+				return fmt.Errorf("create assertion: %w", err)
+			}
+			printJSON(result)
+			return nil
 		},
 	}
 	cmd.Flags().String("stance", "support", "Stance: support, contest, or refine")
@@ -329,7 +439,24 @@ func reviewCmd() *cobra.Command {
 		Short: "Rate an assertion's helpfulness",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			c, err := client.New()
+			if err != nil {
+				return err
+			}
+
+			helpfulness, _ := cmd.Flags().GetFloat64("helpfulness")
+			reasoning, _ := cmd.Flags().GetString("reasoning")
+
+			result, err := c.CreateReview(map[string]any{
+				"assertion_id": args[0],
+				"helpfulness":  helpfulness,
+				"reasoning":    reasoning,
+			})
+			if err != nil {
+				return fmt.Errorf("create review: %w", err)
+			}
+			printJSON(result)
+			return nil
 		},
 	}
 	cmd.Flags().Float64("helpfulness", 0.5, "Helpfulness rating (0-1)")
@@ -343,7 +470,25 @@ func dependCmd() *cobra.Command {
 		Short: "Declare a dependency between claims",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			c, err := client.New()
+			if err != nil {
+				return err
+			}
+
+			strength, _ := cmd.Flags().GetFloat64("strength")
+			reasoning, _ := cmd.Flags().GetString("reasoning")
+
+			result, err := c.CreateDependency(map[string]any{
+				"claim_id":     args[0],
+				"depends_on_id": args[1],
+				"strength":     strength,
+				"reasoning":    reasoning,
+			})
+			if err != nil {
+				return fmt.Errorf("create dependency: %w", err)
+			}
+			printJSON(result)
+			return nil
 		},
 	}
 	cmd.Flags().Float64("strength", 1.0, "How load-bearing (0-1)")
@@ -356,7 +501,16 @@ func leaderboardCmd() *cobra.Command {
 		Use:   "leaderboard",
 		Short: "Agent rankings by weight",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			c, err := client.New()
+			if err != nil {
+				return err
+			}
+			result, err := c.Leaderboard(25)
+			if err != nil {
+				return fmt.Errorf("leaderboard: %w", err)
+			}
+			printJSON(result)
+			return nil
 		},
 	}
 }
@@ -366,7 +520,16 @@ func contestedCmd() *cobra.Command {
 		Use:   "contested",
 		Short: "Most contested claims",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			c, err := client.New()
+			if err != nil {
+				return err
+			}
+			result, err := c.Contested(25)
+			if err != nil {
+				return fmt.Errorf("contested: %w", err)
+			}
+			printJSON(result)
+			return nil
 		},
 	}
 }
@@ -376,7 +539,16 @@ func frontierCmd() *cobra.Command {
 		Use:   "frontier",
 		Short: "Knowledge frontiers worth exploring",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			c, err := client.New()
+			if err != nil {
+				return err
+			}
+			result, err := c.Frontier(25)
+			if err != nil {
+				return fmt.Errorf("frontier: %w", err)
+			}
+			printJSON(result)
+			return nil
 		},
 	}
 }
@@ -387,7 +559,20 @@ func showCmd() *cobra.Command {
 		Short: "Detail view for any claim or agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			c, err := client.New()
+			if err != nil {
+				return err
+			}
+			// Try claim first, then agent
+			result, err := c.GetClaim(args[0])
+			if err != nil {
+				result, err = c.GetAgent(args[0])
+				if err != nil {
+					return fmt.Errorf("not found: %s", args[0])
+				}
+			}
+			printJSON(result)
+			return nil
 		},
 	}
 }
@@ -435,4 +620,9 @@ func runToken(cmd *cobra.Command) error {
 
 func openDB(path string) (*db.Store, error) {
 	return db.Open(path)
+}
+
+func printJSON(v any) {
+	data, _ := json.MarshalIndent(v, "", "  ")
+	fmt.Println(string(data))
 }
