@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ehrlich-b/ground/internal/agent"
 	"github.com/ehrlich-b/ground/internal/api"
 	"github.com/ehrlich-b/ground/internal/client"
 	"github.com/ehrlich-b/ground/internal/db"
@@ -93,13 +94,37 @@ func serveCmd() *cobra.Command {
 }
 
 func seedCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "seed",
 		Short: "Seed axioms, register agents, generate claims, compute epoch",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
+			dbPath, _ := cmd.Flags().GetString("db")
+			serverURL, _ := cmd.Flags().GetString("server")
+			groundBin, _ := cmd.Flags().GetString("ground-bin")
+			concurrency, _ := cmd.Flags().GetInt("concurrency")
+			skipAgents, _ := cmd.Flags().GetBool("skip-agents")
+
+			secret := os.Getenv("GROUND_JWT_SECRET")
+			if secret == "" {
+				return fmt.Errorf("GROUND_JWT_SECRET environment variable is required")
+			}
+
+			return agent.RunSeed(agent.SeedConfig{
+				DBPath:      dbPath,
+				JWTSecret:   []byte(secret),
+				ServerURL:   serverURL,
+				GroundBin:   groundBin,
+				Concurrency: concurrency,
+				SkipAgents:  skipAgents,
+			})
 		},
 	}
+	cmd.Flags().String("db", "ground.db", "Database path")
+	cmd.Flags().String("server", "http://localhost:8080", "Ground server URL")
+	cmd.Flags().String("ground-bin", "ground", "Path to ground binary")
+	cmd.Flags().Int("concurrency", 4, "Max parallel agent processes")
+	cmd.Flags().Bool("skip-agents", false, "Skip agent rounds (axioms + compute only)")
+	return cmd
 }
 
 func computeCmd() *cobra.Command {
