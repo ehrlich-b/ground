@@ -112,11 +112,14 @@ func seedCmd() *cobra.Command {
 				return fmt.Errorf("GROUND_JWT_SECRET environment variable is required")
 			}
 
+			model, _ := cmd.Flags().GetString("model")
+
 			return agent.RunSeed(agent.SeedConfig{
 				DBPath:      dbPath,
 				JWTSecret:   []byte(secret),
 				ServerURL:   serverURL,
 				GroundBin:   groundBin,
+				Model:       model,
 				Concurrency: concurrency,
 				SkipAgents:  skipAgents,
 			})
@@ -125,7 +128,8 @@ func seedCmd() *cobra.Command {
 	cmd.Flags().String("db", "ground.db", "Database path")
 	cmd.Flags().String("server", "http://localhost:8080", "Ground server URL")
 	cmd.Flags().String("ground-bin", "ground", "Path to ground binary")
-	cmd.Flags().Int("concurrency", 4, "Max parallel agent processes")
+	cmd.Flags().String("model", "sonnet", "Claude model for agents (sonnet, opus, haiku)")
+	cmd.Flags().Int("concurrency", 5, "Max parallel agent processes")
 	cmd.Flags().Bool("skip-agents", false, "Skip agent rounds (axioms + compute only)")
 	return cmd
 }

@@ -180,6 +180,7 @@ type SeedConfig struct {
 	JWTSecret   []byte
 	ServerURL   string // URL where ground server is running
 	GroundBin   string // path to ground binary
+	Model       string // claude model to use (default: sonnet)
 	Concurrency int    // max parallel agents
 	SkipAgents  bool   // skip agent rounds (axioms + compute only)
 }
@@ -431,30 +432,46 @@ func runAgent(agent SeedAgent, cfg SeedConfig, taskTemplate string) error {
 	topicList := strings.Join(agent.Topics, ", ")
 	task := strings.ReplaceAll(taskTemplate, "{{TOPICS}}", topicList)
 
-	// Build the full prompt: personality + task
-	fullPrompt := agent.Prompt + "\n\n---\n\n" + task
-
-	// Write prompt to temp file
-	promptFile := filepath.Join(os.TempDir(), "ground-seed-agents", agent.Name, "prompt.md")
-	if err := os.WriteFile(promptFile, []byte(fullPrompt), 0600); err != nil {
-		return fmt.Errorf("write prompt: %w", err)
+	// Load CLI reference
+	cliRef, err := os.ReadFile("tasks/cli-reference.md")
+	if err != nil {
+		cliRef = []byte("") // non-fatal if missing
 	}
+
+	// Build the full prompt: personality + CLI reference + task
+	fullPrompt := agent.Prompt + "\n\n---\n\n" + string(cliRef) + "\n\n---\n\n" + task
 
 	// Set HOME to agent-specific dir so ground CLI reads per-agent config
 	agentHome := filepath.Join(os.TempDir(), "ground-seed-agents", agent.Name)
 
+	model := cfg.Model
+	if model == "" {
+		model = "sonnet"
+	}
+
+	log.Printf("[%s] starting (model=%s)...", agent.Name, model)
+	start := time.Now()
+
+	cmd := exec.Command("claude",
+		"--model", model,
+		"-p", fullPrompt,
+		"--allowedTools", "Bash",
+	)
+
+	// Set HOME for agent credentials, add ground binary to PATH
 	groundBin := cfg.GroundBin
 	if groundBin == "" {
 		groundBin = "ground"
 	}
-
-	log.Printf("[%s] starting...", agent.Name)
-	start := time.Now()
-
-	cmd := exec.Command("claude", "-p", fullPrompt,
-		"--allowedTools", "Bash",
-	)
-	cmd.Env = append(os.Environ(), "HOME="+agentHome)
+	groundDir := filepath.Dir(groundBin)
+	if groundDir == "." {
+		groundDir = ""
+	}
+	env := append(os.Environ(), "HOME="+agentHome)
+	if groundDir != "" {
+		env = append(env, "PATH="+groundDir+":"+os.Getenv("PATH"))
+	}
+	cmd.Env = env
 
 	// Capture output
 	stdout, err := cmd.StdoutPipe()
