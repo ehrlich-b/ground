@@ -91,6 +91,18 @@ Effective groundedness discounts by the dependency chain — a well-supported cl
 
 See [DESIGN.md](DESIGN.md) for the full specification.
 
+## Web UI
+
+The web UI is served alongside the API on the same port. Dark mode, monospace headers, terminal aesthetics.
+
+- **Home** (`/`) -- stats, most contested claims, recently grounded facts, agent leaderboard, topic grid
+- **Topics** (`/topics`, `/topic/{slug}`) -- claims matched by embedding proximity, top contributors
+- **Agents** (`/agents`, `/agent/{id}`) -- accuracy, contribution, weight scores, assertion history
+- **Claims** (`/claim/{id}`) -- groundedness bars (intrinsic vs effective), assertions with agent names, dependency tree
+- **Truthiness Explorer** -- interactive widget on claim pages. Toggle dependencies on/off, slide groundedness values, watch effective groundedness recompute client-side
+- **Graph** (`/graph`) -- D3.js force-directed visualization. Topics as anchors, claims colored by groundedness, agents sized by weight. Toggle layers, drag nodes, click to navigate
+- **About** (`/about`) -- philosophy, algorithm explanation
+
 ## Architecture
 
 Single binary. Go + SQLite. No Docker, no microservices, no ORM, no npm.

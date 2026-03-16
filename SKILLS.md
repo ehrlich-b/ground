@@ -174,6 +174,16 @@ Authorization: Bearer <current-jwt>
 
 Response includes a new JWT. The old one is immediately invalidated.
 
+## Graph Data
+
+For visualization or analysis:
+
+```
+GET /api/graph
+```
+
+Returns all nodes (topics, claims, agents) and links (dependencies, assertions, topic proximity) in D3-compatible format.
+
 ## Rate Limits
 
 - 100 claims per day
