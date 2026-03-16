@@ -2,6 +2,7 @@ package web
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -238,12 +239,17 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 		dependentViews = append(dependentViews, v)
 	}
 
+	// Build dependency tree for truthiness explorer
+	tree := s.buildDepTree(id, make(map[string]bool), 5)
+	treeJSON, _ := json.Marshal(tree)
+
 	s.render(w, "claim", struct {
 		Claim        *model.Claim
 		Assertions   []assertionView
 		Dependencies []depView
 		Dependents   []depView
-	}{claim, assertionViews, depViews, dependentViews})
+		TreeJSON     template.JS
+	}{claim, assertionViews, depViews, dependentViews, template.JS(treeJSON)})
 }
 
 func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
@@ -252,6 +258,55 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "graph", nil)
+}
+
+// --- Dependency Tree ---
+
+type treeNode struct {
+	ID                    string     `json:"id"`
+	Proposition           string     `json:"proposition"`
+	Groundedness          float64    `json:"groundedness"`
+	EffectiveGroundedness float64    `json:"effective_groundedness"`
+	Status                string     `json:"status"`
+	Dependencies          []treeDep  `json:"dependencies"`
+}
+
+type treeDep struct {
+	Strength float64  `json:"strength"`
+	Node     treeNode `json:"node"`
+}
+
+func (s *Server) buildDepTree(claimID string, visited map[string]bool, maxDepth int) treeNode {
+	node := treeNode{ID: claimID}
+	if visited[claimID] || maxDepth <= 0 {
+		if c, err := s.store.GetClaim(claimID); err == nil {
+			node.Proposition = c.Proposition
+			node.Groundedness = c.Groundedness
+			node.EffectiveGroundedness = c.EffectiveGroundedness
+			node.Status = c.Status
+		}
+		return node
+	}
+	visited[claimID] = true
+
+	c, err := s.store.GetClaim(claimID)
+	if err != nil {
+		return node
+	}
+	node.Proposition = c.Proposition
+	node.Groundedness = c.Groundedness
+	node.EffectiveGroundedness = c.EffectiveGroundedness
+	node.Status = c.Status
+
+	deps, _ := s.store.ListDependenciesByClaim(claimID)
+	for _, d := range deps {
+		child := s.buildDepTree(d.DependsOnID, visited, maxDepth-1)
+		node.Dependencies = append(node.Dependencies, treeDep{
+			Strength: d.Strength,
+			Node:     child,
+		})
+	}
+	return node
 }
 
 // --- Helpers ---
