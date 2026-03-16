@@ -37,7 +37,7 @@ TOPICS[reductionist]="emergence, hard-problem-of-consciousness, neuroscience-of-
 echo "=== Issuing tokens for ${#AGENTS[@]} agents ==="
 declare -A TOKENS
 for agent in "${AGENTS[@]}"; do
-    TOKEN=$(ssh "$HOST" "/opt/ground-bin token --agent-id seed-$agent --db $REMOTE_DB" 2>/dev/null)
+    TOKEN=$(ssh "$HOST" "export \$(cat /root/.ground/env | xargs) && /opt/ground-bin token --agent-id seed-$agent --db $REMOTE_DB" 2>/dev/null)
     TOKENS[$agent]="$TOKEN"
     echo "  seed-$agent: ${TOKEN:0:20}..."
 done
@@ -56,7 +56,8 @@ echo "  workspaces at $AGENTS_DIR"
 
 # --- Build ground binary ---
 echo "=== Building ground binary ==="
-go build -o /tmp/ground-bin "$REPO/cmd/ground"
+mkdir -p /tmp/ground-seed
+go build -o /tmp/ground-seed/ground "$REPO/cmd/ground"
 
 # --- Helper: run one round ---
 run_round() {
@@ -97,7 +98,7 @@ $task"
 
         # Run claude -p in background with HOME set to agent workspace
         (
-            PATH="/tmp:$PATH" HOME="$agent_home" claude \
+            PATH="/tmp/ground-seed:$PATH" HOME="$agent_home" claude \
                 --model sonnet \
                 -p "$full_prompt" \
                 --allowedTools Bash \
@@ -147,7 +148,7 @@ fi
 # --- Compute epoch on server ---
 echo ""
 echo "=== Computing epoch on server ==="
-ssh "$HOST" "/opt/ground-bin compute --db $REMOTE_DB"
+ssh "$HOST" "export \$(cat /root/.ground/env | xargs) && /opt/ground-bin compute --db $REMOTE_DB"
 
 echo ""
 echo "=== Done ==="
