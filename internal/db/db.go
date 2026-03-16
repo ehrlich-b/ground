@@ -239,6 +239,36 @@ func scanTopics(rows *sql.Rows) ([]model.Topic, error) {
 	return topics, rows.Err()
 }
 
+// --- Topic Exclusions ---
+
+func (s *Store) CreateTopicExclusion(e *model.TopicExclusion) error {
+	_, err := s.db.Exec(
+		`INSERT INTO topic_exclusions (id, description, embedding, threshold) VALUES (?, ?, ?, ?)`,
+		e.ID, e.Description, e.Embedding, e.Threshold,
+	)
+	if err != nil {
+		return fmt.Errorf("create topic exclusion: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListTopicExclusions() ([]model.TopicExclusion, error) {
+	rows, err := s.db.Query(`SELECT id, description, embedding, threshold, created_at FROM topic_exclusions ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("list topic exclusions: %w", err)
+	}
+	defer rows.Close()
+	var exclusions []model.TopicExclusion
+	for rows.Next() {
+		var e model.TopicExclusion
+		if err := rows.Scan(&e.ID, &e.Description, &e.Embedding, &e.Threshold, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan topic exclusion: %w", err)
+		}
+		exclusions = append(exclusions, e)
+	}
+	return exclusions, rows.Err()
+}
+
 // --- Claims ---
 
 func (s *Store) CreateClaim(c *model.Claim) error {
@@ -367,6 +397,71 @@ func scanClaims(rows *sql.Rows) ([]model.Claim, error) {
 		claims = append(claims, c)
 	}
 	return claims, rows.Err()
+}
+
+// --- Claim/Topic Embedding Queries ---
+
+// ListClaimEmbeddings returns lightweight claim data for duplicate detection.
+func (s *Store) ListClaimEmbeddings() ([]struct {
+	ID          string
+	Proposition string
+	Embedding   []byte
+}, error) {
+	rows, err := s.db.Query(`SELECT id, proposition, embedding FROM claims WHERE embedding IS NOT NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("list claim embeddings: %w", err)
+	}
+	defer rows.Close()
+	var results []struct {
+		ID          string
+		Proposition string
+		Embedding   []byte
+	}
+	for rows.Next() {
+		var r struct {
+			ID          string
+			Proposition string
+			Embedding   []byte
+		}
+		if err := rows.Scan(&r.ID, &r.Proposition, &r.Embedding); err != nil {
+			return nil, fmt.Errorf("scan claim embedding: %w", err)
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// ListTopicEmbeddings returns lightweight topic data for proximity checks.
+func (s *Store) ListTopicEmbeddings() ([]struct {
+	ID        string
+	Slug      string
+	Title     string
+	Embedding []byte
+}, error) {
+	rows, err := s.db.Query(`SELECT id, slug, title, embedding FROM topics WHERE embedding IS NOT NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("list topic embeddings: %w", err)
+	}
+	defer rows.Close()
+	var results []struct {
+		ID        string
+		Slug      string
+		Title     string
+		Embedding []byte
+	}
+	for rows.Next() {
+		var r struct {
+			ID        string
+			Slug      string
+			Title     string
+			Embedding []byte
+		}
+		if err := rows.Scan(&r.ID, &r.Slug, &r.Title, &r.Embedding); err != nil {
+			return nil, fmt.Errorf("scan topic embedding: %w", err)
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
 }
 
 // --- Assertions ---
@@ -754,6 +849,44 @@ func (s *Store) MostContestedClaims(limit int) ([]model.Claim, error) {
 	}
 	defer rows.Close()
 	return scanClaims(rows)
+}
+
+// FrontierClaims returns claims with high contestation and high dependency fan-out.
+func (s *Store) FrontierClaims(limit int) ([]model.Claim, error) {
+	rows, err := s.db.Query(
+		`SELECT c.id, c.proposition, c.embedding, c.groundedness, c.effective_groundedness, c.contestation, c.status,
+		        c.adjudicated_value, c.adjudicated_at, c.adjudicated_by, c.adjudication_reasoning, c.parent_claim_id,
+		        c.created_at, c.computed_at
+		 FROM claims c
+		 LEFT JOIN dependencies d ON d.depends_on_id = c.id
+		 WHERE c.status != 'adjudicated'
+		 GROUP BY c.id
+		 ORDER BY c.contestation * (1 + COUNT(d.id)) DESC
+		 LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("frontier claims: %w", err)
+	}
+	defer rows.Close()
+	return scanClaims(rows)
+}
+
+func (s *Store) ListEpochs() ([]model.Epoch, error) {
+	rows, err := s.db.Query(
+		`SELECT id, started_at, completed_at, accuracy_iterations, contribution_iterations, accuracy_delta, contribution_delta
+		 FROM epochs ORDER BY id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list epochs: %w", err)
+	}
+	defer rows.Close()
+	var epochs []model.Epoch
+	for rows.Next() {
+		var e model.Epoch
+		if err := rows.Scan(&e.ID, &e.StartedAt, &e.CompletedAt, &e.AccuracyIterations, &e.ContributionIterations, &e.AccuracyDelta, &e.ContributionDelta); err != nil {
+			return nil, fmt.Errorf("scan epoch: %w", err)
+		}
+		epochs = append(epochs, e)
+	}
+	return epochs, rows.Err()
 }
 
 // --- ID Generation ---
