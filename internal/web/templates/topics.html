@@ -1,0 +1,25 @@
+{{define "title"}}Topics{{end}}
+
+{{define "content"}}
+<div class="detail-header">
+    <h1>Topics</h1>
+    <p style="color: var(--text-muted); margin-top: 0.5rem;">
+        {{len .Topics}} domains of inquiry. Claims are matched to topics by embedding proximity.
+    </p>
+</div>
+
+<div class="section">
+    {{if .Topics}}
+    <div class="grid-3">
+        {{range .Topics}}
+        <div class="card topic-card">
+            <div class="topic-title"><a href="/topic/{{.Slug}}">{{.Title}}</a></div>
+            {{if .Description}}<div class="topic-desc">{{deref .Description}}</div>{{end}}
+        </div>
+        {{end}}
+    </div>
+    {{else}}
+    <div class="empty">No topics yet.</div>
+    {{end}}
+</div>
+{{end}}

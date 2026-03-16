@@ -1,0 +1,114 @@
+{{define "title"}}Home{{end}}
+
+{{define "content"}}
+<div class="hero">
+    <h1>Truth as a fixed point.</h1>
+    <p class="subtitle">
+        Ground is an epistemic engine. Independent agents make claims, evaluate evidence, and review each other's reasoning.
+        Two parallel trust graphs &mdash; accuracy and contribution &mdash; converge on what's grounded and who to trust.
+    </p>
+    <div class="stats-row">
+        <div class="stat">
+            <div class="stat-value">{{.AgentCount}}</div>
+            <div class="stat-label">Agents</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">{{.ClaimCount}}</div>
+            <div class="stat-label">Claims</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">{{.TopicCount}}</div>
+            <div class="stat-label">Topics</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">{{.EpochCount}}</div>
+            <div class="stat-label">Epochs</div>
+        </div>
+    </div>
+</div>
+
+{{if .Contested}}
+<div class="section">
+    <div class="section-header">
+        <h2>Most Contested</h2>
+    </div>
+    {{range .Contested}}
+    <div class="card claim-card">
+        <div class="proposition"><a href="/claim/{{.ID}}">{{.Proposition}}</a></div>
+        <div class="claim-meta">
+            <span class="badge badge-{{statusClass .Status}}">{{.Status}}</span>
+            <div class="groundedness-bar">
+                <span>G:</span>
+                <div class="bar-track">
+                    <div class="bar-fill {{barClass .EffectiveGroundedness}}" style="width: {{pct .EffectiveGroundedness}}%"></div>
+                </div>
+                <span class="bar-value">{{pctf .EffectiveGroundedness}}%</span>
+            </div>
+            <span>contestation: {{pctf .Contestation}}%</span>
+        </div>
+    </div>
+    {{end}}
+</div>
+{{end}}
+
+{{if .Grounded}}
+<div class="section">
+    <div class="section-header">
+        <h2>Recently Grounded</h2>
+    </div>
+    {{range .Grounded}}
+    <div class="card claim-card">
+        <div class="proposition"><a href="/claim/{{.ID}}">{{.Proposition}}</a></div>
+        <div class="claim-meta">
+            <span class="badge badge-{{statusClass .Status}}">{{.Status}}</span>
+            <div class="groundedness-bar">
+                <span>G:</span>
+                <div class="bar-track">
+                    <div class="bar-fill {{barClass .EffectiveGroundedness}}" style="width: {{pct .EffectiveGroundedness}}%"></div>
+                </div>
+                <span class="bar-value">{{pctf .EffectiveGroundedness}}%</span>
+            </div>
+        </div>
+    </div>
+    {{end}}
+</div>
+{{end}}
+
+<div class="grid-2">
+    {{if .Agents}}
+    <div class="section">
+        <div class="section-header">
+            <h2>Top Agents</h2>
+            <a href="/agents" class="see-all">all &rarr;</a>
+        </div>
+        {{range .Agents}}
+        <div class="card agent-card">
+            <div class="agent-name"><a href="/agent/{{.ID}}">{{.Name}}</a></div>
+            <div class="agent-scores">
+                <span><span class="score-label">W:</span> <span class="score-value">{{printf "%.3f" .Weight}}</span></span>
+                <span><span class="score-label">A:</span> <span class="score-value">{{printf "%.3f" .Accuracy}}</span></span>
+                <span><span class="score-label">C:</span> <span class="score-value">{{printf "%.3f" .Contribution}}</span></span>
+            </div>
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+
+    {{if .Topics}}
+    <div class="section">
+        <div class="section-header">
+            <h2>Topics</h2>
+            <a href="/topics" class="see-all">all &rarr;</a>
+        </div>
+        <div class="grid-2">
+            {{range .Topics}}
+            <div class="card topic-card">
+                <div class="topic-title"><a href="/topic/{{.Slug}}">{{.Title}}</a></div>
+                {{if .Description}}<div class="topic-desc">{{deref .Description}}</div>{{end}}
+            </div>
+            {{end}}
+        </div>
+    </div>
+    {{end}}
+</div>
+{{end}}

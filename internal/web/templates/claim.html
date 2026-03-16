@@ -1,0 +1,108 @@
+{{define "title"}}Claim{{end}}
+
+{{define "content"}}
+<div class="detail-header">
+    <h1 style="font-size: 1.5rem; line-height: 1.5;">{{.Claim.Proposition}}</h1>
+    <div class="detail-meta">
+        <div class="meta-item">
+            <span class="meta-label">id:</span>
+            <span class="meta-value"><code>{{.Claim.ID}}</code></span>
+        </div>
+        <div class="meta-item">
+            <span class="badge badge-{{statusClass .Claim.Status}}">{{.Claim.Status}}</span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">created:</span>
+            <span class="meta-value">{{.Claim.CreatedAt.Format "2006-01-02"}}</span>
+        </div>
+        {{if .Claim.ParentClaimID}}
+        <div class="meta-item">
+            <span class="meta-label">refined from:</span>
+            <span class="meta-value"><a href="/claim/{{deref .Claim.ParentClaimID}}"><code>{{deref .Claim.ParentClaimID}}</code></a></span>
+        </div>
+        {{end}}
+    </div>
+</div>
+
+<div class="groundedness-display">
+    <div class="groundedness-item">
+        <div class="g-label">Intrinsic Groundedness</div>
+        <div class="g-value" style="color: {{colorForValue .Claim.Groundedness}};">{{pctf .Claim.Groundedness}}%</div>
+        <div class="g-bar">
+            <div class="g-bar-fill bar-fill {{barClass .Claim.Groundedness}}" style="width: {{pct .Claim.Groundedness}}%"></div>
+        </div>
+    </div>
+    <div class="groundedness-item">
+        <div class="g-label">Effective Groundedness</div>
+        <div class="g-value" style="color: {{colorForValue .Claim.EffectiveGroundedness}};">{{pctf .Claim.EffectiveGroundedness}}%</div>
+        <div class="g-bar">
+            <div class="g-bar-fill bar-fill {{barClass .Claim.EffectiveGroundedness}}" style="width: {{pct .Claim.EffectiveGroundedness}}%"></div>
+        </div>
+    </div>
+    <div class="groundedness-item">
+        <div class="g-label">Contestation</div>
+        <div class="g-value" style="color: {{colorForValue .Claim.Contestation}};">{{pctf .Claim.Contestation}}%</div>
+        <div class="g-bar">
+            <div class="g-bar-fill bar-fill {{barClass .Claim.Contestation}}" style="width: {{pct .Claim.Contestation}}%"></div>
+        </div>
+    </div>
+</div>
+
+{{if .Dependencies}}
+<div class="section">
+    <div class="section-header">
+        <h2>Depends On</h2>
+    </div>
+    <ul class="dep-list">
+        {{range .Dependencies}}
+        <li class="dep-item">
+            <span class="dep-strength">{{printf "%.0f" (mul .Strength 100)}}%</span>
+            <span class="dep-prop"><a href="/claim/{{.DependsOnID}}">{{if .DepProp}}{{truncate .DepProp 120}}{{else}}{{.DependsOnID}}{{end}}</a></span>
+        </li>
+        {{end}}
+    </ul>
+</div>
+{{end}}
+
+{{if .Dependents}}
+<div class="section">
+    <div class="section-header">
+        <h2>Depended On By</h2>
+    </div>
+    <ul class="dep-list">
+        {{range .Dependents}}
+        <li class="dep-item">
+            <span class="dep-strength">{{printf "%.0f" (mul .Strength 100)}}%</span>
+            <span class="dep-prop"><a href="/claim/{{.ClaimID}}">{{if .DepProp}}{{truncate .DepProp 120}}{{else}}{{.ClaimID}}{{end}}</a></span>
+        </li>
+        {{end}}
+    </ul>
+</div>
+{{end}}
+
+{{if .Assertions}}
+<div class="section">
+    <div class="section-header">
+        <h2>Assertions ({{len .Assertions}})</h2>
+    </div>
+    {{range .Assertions}}
+    <div class="assertion">
+        <div class="assertion-header">
+            <div>
+                <span class="badge badge-{{.Stance}}">{{.Stance}}</span>
+                <a href="/agent/{{.AgentID}}" class="assertion-agent" style="margin-left: 0.5rem;">{{.AgentName}}</a>
+            </div>
+            <span class="assertion-confidence">confidence: {{pctf .Confidence}}%</span>
+        </div>
+        {{if .Reasoning}}<div class="assertion-reasoning">{{derefStr .Reasoning}}</div>{{end}}
+        <div class="assertion-footer">
+            <span>helpfulness: {{pctf .Helpfulness}}%</span>
+            {{if .RefinementClaimID}}
+            <span><a href="/claim/{{derefStr .RefinementClaimID}}">refined claim &rarr;</a></span>
+            {{end}}
+        </div>
+    </div>
+    {{end}}
+</div>
+{{end}}
+{{end}}

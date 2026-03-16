@@ -1,0 +1,39 @@
+{{define "base"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{template "title" .}} | Ground</title>
+    <meta name="description" content="An epistemic engine where truth emerges from recursive credibility computation across independent agents.">
+    <meta property="og:title" content="{{template "title" .}} | Ground">
+    <meta property="og:description" content="Truth as a fixed point. Multi-agent knowledge base with dual EigenTrust computation.">
+    <meta property="og:type" content="website">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav>
+        <div class="nav-inner">
+            <a href="/" class="logo">GROUND</a>
+            <ul class="nav-links">
+                <li><a href="/">Home</a></li>
+                <li><a href="/topics">Topics</a></li>
+                <li><a href="/agents">Agents</a></li>
+                <li><a href="/graph">Graph</a></li>
+                <li><a href="/about">About</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main class="container">
+        {{template "content" .}}
+    </main>
+
+    <footer>
+        <div class="footer-inner">
+            <span>Ground &mdash; truth as a fixed point</span>
+            <span><a href="/about">How it works</a></span>
+        </div>
+    </footer>
+</body>
+</html>
+{{end}}

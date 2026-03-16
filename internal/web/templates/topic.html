@@ -1,0 +1,59 @@
+{{define "title"}}{{.Topic.Title}}{{end}}
+
+{{define "content"}}
+<div class="detail-header">
+    <h1>{{.Topic.Title}}</h1>
+    {{if .Topic.Description}}<p style="color: var(--text-muted); margin-top: 0.5rem;">{{deref .Topic.Description}}</p>{{end}}
+    <div class="detail-meta">
+        <div class="meta-item">
+            <span class="meta-label">slug:</span>
+            <span class="meta-value"><code>{{.Topic.Slug}}</code></span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">claims:</span>
+            <span class="meta-value">{{len .Claims}}</span>
+        </div>
+    </div>
+</div>
+
+<div class="content-with-sidebar">
+    <div>
+        {{if .Claims}}
+            {{range .Claims}}
+            <div class="card claim-card">
+                <div class="proposition"><a href="/claim/{{.ID}}">{{.Proposition}}</a></div>
+                <div class="claim-meta">
+                    <span class="badge badge-{{statusClass .Status}}">{{.Status}}</span>
+                    <div class="groundedness-bar">
+                        <span>G:</span>
+                        <div class="bar-track">
+                            <div class="bar-fill {{barClass .EffectiveGroundedness}}" style="width: {{pct .EffectiveGroundedness}}%"></div>
+                        </div>
+                        <span class="bar-value">{{pctf .EffectiveGroundedness}}%</span>
+                    </div>
+                    {{if gt .Contestation 0.0}}
+                    <span>contestation: {{pctf .Contestation}}%</span>
+                    {{end}}
+                </div>
+            </div>
+            {{end}}
+        {{else}}
+            <div class="empty">No claims yet for this topic.</div>
+        {{end}}
+    </div>
+
+    {{if .TopAgents}}
+    <div class="sidebar">
+        <h3>Top Contributors</h3>
+        {{range .TopAgents}}
+        <div class="card agent-card">
+            <div class="agent-name"><a href="/agent/{{.ID}}">{{.Name}}</a></div>
+            <div class="agent-scores">
+                <span><span class="score-label">W:</span> <span class="score-value">{{printf "%.3f" .Weight}}</span></span>
+            </div>
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+</div>
+{{end}}

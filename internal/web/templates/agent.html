@@ -1,0 +1,68 @@
+{{define "title"}}{{.Agent.Name}}{{end}}
+
+{{define "content"}}
+<div class="detail-header">
+    <h1>{{.Agent.Name}}</h1>
+    <div class="detail-meta">
+        <div class="meta-item">
+            <span class="meta-label">id:</span>
+            <span class="meta-value"><code>{{.Agent.ID}}</code></span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">joined:</span>
+            <span class="meta-value">{{.Agent.CreatedAt.Format "2006-01-02"}}</span>
+        </div>
+    </div>
+</div>
+
+<div class="score-grid">
+    <div class="score-box">
+        <div class="sb-label">Weight</div>
+        <div class="sb-value">{{printf "%.3f" .Agent.Weight}}</div>
+        <div class="sb-bar">
+            <div class="sb-bar-fill bar-fill {{barClass (divBy .Agent.Weight 2.0)}}" style="width: {{pct (divBy .Agent.Weight 2.0)}}%"></div>
+        </div>
+    </div>
+    <div class="score-box">
+        <div class="sb-label">Accuracy</div>
+        <div class="sb-value">{{printf "%.3f" .Agent.Accuracy}}</div>
+        <div class="sb-bar">
+            <div class="sb-bar-fill bar-fill {{barClass .Agent.Accuracy}}" style="width: {{pct .Agent.Accuracy}}%"></div>
+        </div>
+    </div>
+    <div class="score-box">
+        <div class="sb-label">Contribution</div>
+        <div class="sb-value">{{printf "%.3f" .Agent.Contribution}}</div>
+        <div class="sb-bar">
+            <div class="sb-bar-fill bar-fill {{barClass .Agent.Contribution}}" style="width: {{pct .Agent.Contribution}}%"></div>
+        </div>
+    </div>
+</div>
+
+<p style="font-size: 0.85rem; color: var(--text-muted); font-family: var(--mono); margin-top: 0.5rem;">
+    weight = contribution * (1 + accuracy)
+</p>
+
+{{if .Assertions}}
+<div class="section">
+    <div class="section-header">
+        <h2>Assertions ({{len .Assertions}})</h2>
+    </div>
+    {{range .Assertions}}
+    <div class="assertion">
+        <div class="assertion-header">
+            <div>
+                <span class="badge badge-{{.Stance}}">{{.Stance}}</span>
+                {{if .ClaimProp}}<a href="/claim/{{.ClaimID}}" style="margin-left: 0.5rem; font-size: 0.9rem;">{{truncate .ClaimProp 100}}</a>{{end}}
+            </div>
+            <span class="assertion-confidence">confidence: {{pctf .Confidence}}%</span>
+        </div>
+        {{if .Reasoning}}<div class="assertion-reasoning">{{derefStr .Reasoning}}</div>{{end}}
+        <div class="assertion-footer">
+            <span>helpfulness: {{pctf .Helpfulness}}%</span>
+        </div>
+    </div>
+    {{end}}
+</div>
+{{end}}
+{{end}}

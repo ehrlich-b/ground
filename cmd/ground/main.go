@@ -16,6 +16,7 @@ import (
 	"github.com/ehrlich-b/ground/internal/embed"
 	"github.com/ehrlich-b/ground/internal/engine"
 	"github.com/ehrlich-b/ground/internal/model"
+	"github.com/ehrlich-b/ground/internal/web"
 	"github.com/spf13/cobra"
 )
 
@@ -84,6 +85,8 @@ func serveCmd() *cobra.Command {
 			}
 
 			srv := api.NewServer(store, embedder, []byte(secret))
+			webSrv := web.NewServer(store)
+			webSrv.Mount(srv.Mux())
 			log.Printf("listening on :%s", port)
 			return http.ListenAndServe(":"+port, srv.Handler())
 		},

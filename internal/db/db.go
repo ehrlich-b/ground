@@ -361,6 +361,20 @@ func (s *Store) AdjudicateClaim(id string, value float64, by, reasoning string) 
 	return nil
 }
 
+func (s *Store) ListGroundedClaims(limit int) ([]model.Claim, error) {
+	rows, err := s.db.Query(
+		`SELECT id, proposition, embedding, groundedness, effective_groundedness, contestation, status,
+		        adjudicated_value, adjudicated_at, adjudicated_by, adjudication_reasoning, parent_claim_id,
+		        created_at, computed_at
+		 FROM claims WHERE status IN ('grounded', 'adjudicated')
+		 ORDER BY COALESCE(computed_at, created_at) DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list grounded claims: %w", err)
+	}
+	defer rows.Close()
+	return scanClaims(rows)
+}
+
 func (s *Store) CountClaims() (int, error) {
 	var count int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM claims`).Scan(&count)

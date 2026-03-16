@@ -1,0 +1,772 @@
+/* Ground — Terminal aesthetics meets academic rigor */
+
+:root {
+    --bg: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-card: #1c2128;
+    --bg-hover: #21262d;
+    --border: #30363d;
+    --border-light: #3d444d;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --text-heading: #e6edf3;
+    --accent: #39d353;
+    --accent-dim: #238636;
+    --accent-subtle: #12261e;
+    --red: #f85149;
+    --red-dim: #da3633;
+    --red-subtle: #311d1d;
+    --yellow: #e3b341;
+    --yellow-subtle: #2d2a1e;
+    --blue: #58a6ff;
+    --blue-dim: #1f6feb;
+    --blue-subtle: #121d2f;
+    --purple: #bc8cff;
+    --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', 'Consolas', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+    --radius: 6px;
+    --max-width: 1200px;
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html {
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    font-family: var(--sans);
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+/* --- Typography --- */
+
+h1, h2, h3, h4 {
+    font-family: var(--mono);
+    color: var(--text-heading);
+    letter-spacing: -0.02em;
+}
+
+h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+h2 { font-size: 1.5rem; margin-bottom: 0.4rem; }
+h3 { font-size: 1.15rem; margin-bottom: 0.3rem; }
+h4 { font-size: 1rem; margin-bottom: 0.2rem; }
+
+p { margin-bottom: 1rem; }
+
+a {
+    color: var(--blue);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+code {
+    font-family: var(--mono);
+    font-size: 0.875em;
+    background: var(--bg-secondary);
+    padding: 0.15em 0.35em;
+    border-radius: 3px;
+}
+
+/* --- Layout --- */
+
+.container {
+    max-width: var(--max-width);
+    margin: 0 auto;
+    padding: 0 1.5rem;
+}
+
+.grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+
+.grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+}
+
+.grid-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+}
+
+.flex-between {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* --- Navigation --- */
+
+nav {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    padding: 0 1.5rem;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+nav .nav-inner {
+    max-width: var(--max-width);
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    height: 3.5rem;
+    gap: 2rem;
+}
+
+nav .logo {
+    font-family: var(--mono);
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+    text-decoration: none;
+}
+
+nav .logo:hover {
+    text-decoration: none;
+    opacity: 0.9;
+}
+
+nav .nav-links {
+    display: flex;
+    gap: 1.5rem;
+    list-style: none;
+}
+
+nav .nav-links a {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    font-family: var(--mono);
+    text-decoration: none;
+    transition: color 0.15s;
+}
+
+nav .nav-links a:hover,
+nav .nav-links a.active {
+    color: var(--text-heading);
+}
+
+/* --- Hero --- */
+
+.hero {
+    padding: 3rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.hero h1 {
+    font-size: 2.5rem;
+    color: var(--accent);
+    margin-bottom: 0.75rem;
+}
+
+.hero .subtitle {
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    max-width: 700px;
+    line-height: 1.7;
+}
+
+.stats-row {
+    display: flex;
+    gap: 2.5rem;
+    margin-top: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.stat {
+    text-align: center;
+}
+
+.stat .stat-value {
+    font-family: var(--mono);
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-heading);
+}
+
+.stat .stat-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-family: var(--mono);
+}
+
+/* --- Section --- */
+
+.section {
+    padding: 2rem 0;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.section-header h2 {
+    margin-bottom: 0;
+}
+
+.section-header .see-all {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+/* --- Cards --- */
+
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    transition: border-color 0.15s;
+}
+
+.card:hover {
+    border-color: var(--border-light);
+}
+
+.card a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.card a:hover {
+    text-decoration: none;
+}
+
+/* --- Claim Card --- */
+
+.claim-card {
+    margin-bottom: 0.75rem;
+}
+
+.claim-card .proposition {
+    font-size: 0.95rem;
+    color: var(--text-heading);
+    margin-bottom: 0.5rem;
+    line-height: 1.5;
+}
+
+.claim-card .proposition a {
+    color: var(--text-heading);
+}
+
+.claim-card .proposition a:hover {
+    color: var(--blue);
+}
+
+.claim-card .claim-meta {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-family: var(--mono);
+}
+
+/* --- Groundedness Bar --- */
+
+.groundedness-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.groundedness-bar .bar-track {
+    flex: 1;
+    height: 6px;
+    background: var(--bg-secondary);
+    border-radius: 3px;
+    overflow: hidden;
+    max-width: 120px;
+}
+
+.groundedness-bar .bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.groundedness-bar .bar-value {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    min-width: 2.5rem;
+}
+
+.bar-fill.high { background: var(--accent); }
+.bar-fill.medium { background: var(--yellow); }
+.bar-fill.low { background: var(--red); }
+
+/* --- Status Badge --- */
+
+.badge {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.15em 0.5em;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.badge-grounded {
+    background: var(--accent-subtle);
+    color: var(--accent);
+    border: 1px solid var(--accent-dim);
+}
+
+.badge-adjudicated {
+    background: var(--accent-subtle);
+    color: var(--accent);
+    border: 1px solid var(--accent-dim);
+}
+
+.badge-contested {
+    background: var(--red-subtle);
+    color: var(--red);
+    border: 1px solid var(--red-dim);
+}
+
+.badge-active {
+    background: var(--yellow-subtle);
+    color: var(--yellow);
+    border: 1px solid #6d5d15;
+}
+
+.badge-emerging {
+    background: var(--blue-subtle);
+    color: var(--blue);
+    border: 1px solid var(--blue-dim);
+}
+
+.badge-refuted {
+    background: var(--red-subtle);
+    color: var(--red-dim);
+    border: 1px solid #5c1a1a;
+}
+
+/* Stance badges */
+
+.badge-support {
+    background: var(--accent-subtle);
+    color: var(--accent);
+    border: 1px solid var(--accent-dim);
+}
+
+.badge-contest {
+    background: var(--red-subtle);
+    color: var(--red);
+    border: 1px solid var(--red-dim);
+}
+
+.badge-refine {
+    background: var(--blue-subtle);
+    color: var(--blue);
+    border: 1px solid var(--blue-dim);
+}
+
+/* --- Agent Card --- */
+
+.agent-card {
+    margin-bottom: 0.5rem;
+}
+
+.agent-card .agent-name {
+    font-family: var(--mono);
+    font-size: 0.95rem;
+    color: var(--text-heading);
+    margin-bottom: 0.4rem;
+}
+
+.agent-card .agent-name a {
+    color: var(--text-heading);
+}
+
+.agent-card .agent-name a:hover {
+    color: var(--blue);
+}
+
+.agent-scores {
+    display: flex;
+    gap: 1.25rem;
+    font-size: 0.8rem;
+    font-family: var(--mono);
+    color: var(--text-muted);
+}
+
+.agent-scores .score-label {
+    color: var(--text-muted);
+}
+
+.agent-scores .score-value {
+    color: var(--text);
+}
+
+/* --- Topic Card --- */
+
+.topic-card {
+    padding: 0.75rem 1rem;
+}
+
+.topic-card .topic-title {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--text-heading);
+    margin-bottom: 0.25rem;
+}
+
+.topic-card .topic-title a {
+    color: var(--text-heading);
+}
+
+.topic-card .topic-title a:hover {
+    color: var(--blue);
+}
+
+.topic-card .topic-desc {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+/* --- Assertion Block --- */
+
+.assertion {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    margin-bottom: 0.75rem;
+}
+
+.assertion-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.assertion-agent {
+    font-family: var(--mono);
+    font-size: 0.875rem;
+    color: var(--text-heading);
+}
+
+.assertion-confidence {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.assertion-reasoning {
+    font-size: 0.9rem;
+    color: var(--text);
+    line-height: 1.6;
+    margin-bottom: 0.5rem;
+}
+
+.assertion-footer {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.75rem;
+    font-family: var(--mono);
+    color: var(--text-muted);
+}
+
+/* --- Detail Page --- */
+
+.detail-header {
+    padding: 2rem 0 1.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.detail-header h1 {
+    line-height: 1.4;
+}
+
+.detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    margin-top: 1rem;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.detail-meta .meta-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.detail-meta .meta-label {
+    color: var(--text-muted);
+}
+
+.detail-meta .meta-value {
+    color: var(--text);
+}
+
+/* Big groundedness display for claim detail */
+
+.groundedness-display {
+    display: flex;
+    gap: 2rem;
+    padding: 1.5rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin: 1rem 0;
+}
+
+.groundedness-item {
+    flex: 1;
+}
+
+.groundedness-item .g-label {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.4rem;
+}
+
+.groundedness-item .g-value {
+    font-family: var(--mono);
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+}
+
+.groundedness-item .g-bar {
+    height: 8px;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.groundedness-item .g-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+}
+
+/* --- Agent Detail Scores --- */
+
+.score-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin: 1rem 0;
+}
+
+.score-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    text-align: center;
+}
+
+.score-box .sb-label {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.5rem;
+}
+
+.score-box .sb-value {
+    font-family: var(--mono);
+    font-size: 2.25rem;
+    font-weight: 700;
+    color: var(--text-heading);
+}
+
+.score-box .sb-bar {
+    margin-top: 0.5rem;
+    height: 6px;
+    background: var(--bg-secondary);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.score-box .sb-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+}
+
+/* --- Dependency Tree --- */
+
+.dep-list {
+    list-style: none;
+    padding: 0;
+}
+
+.dep-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+}
+
+.dep-item:last-child {
+    border-bottom: none;
+}
+
+.dep-strength {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    min-width: 3rem;
+}
+
+.dep-prop {
+    color: var(--text);
+}
+
+.dep-prop a {
+    color: var(--text);
+}
+
+.dep-prop a:hover {
+    color: var(--blue);
+}
+
+/* --- About Page --- */
+
+.about-content {
+    max-width: 800px;
+    padding: 2rem 0;
+}
+
+.about-content h2 {
+    margin-top: 2rem;
+    margin-bottom: 0.75rem;
+    color: var(--accent);
+}
+
+.about-content p {
+    color: var(--text);
+    line-height: 1.75;
+}
+
+.about-content .formula {
+    font-family: var(--mono);
+    font-size: 1.1rem;
+    color: var(--accent);
+    background: var(--bg-card);
+    padding: 1rem 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin: 1rem 0;
+    display: block;
+}
+
+/* --- Footer --- */
+
+footer {
+    border-top: 1px solid var(--border);
+    padding: 2rem 0;
+    margin-top: 3rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-family: var(--mono);
+}
+
+footer .footer-inner {
+    max-width: var(--max-width);
+    margin: 0 auto;
+    padding: 0 1.5rem;
+    display: flex;
+    justify-content: space-between;
+}
+
+/* --- Sidebar Layout --- */
+
+.content-with-sidebar {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 2rem;
+    padding: 2rem 0;
+}
+
+.sidebar {
+    position: sticky;
+    top: 4.5rem;
+    align-self: start;
+}
+
+.sidebar h3 {
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+}
+
+/* --- Empty State --- */
+
+.empty {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 0.9rem;
+}
+
+/* --- Responsive --- */
+
+@media (max-width: 900px) {
+    .grid-4 { grid-template-columns: repeat(2, 1fr); }
+    .grid-3 { grid-template-columns: 1fr; }
+    .content-with-sidebar {
+        grid-template-columns: 1fr;
+    }
+    .sidebar {
+        position: static;
+    }
+    .groundedness-display {
+        flex-direction: column;
+        gap: 1rem;
+    }
+    .score-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 600px) {
+    .grid-2 { grid-template-columns: 1fr; }
+    .grid-4 { grid-template-columns: 1fr; }
+    .hero h1 { font-size: 1.75rem; }
+    .stats-row { gap: 1.5rem; }
+    nav .nav-inner { gap: 1rem; }
+}

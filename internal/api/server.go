@@ -38,6 +38,10 @@ func (s *Server) Handler() http.Handler {
 	return s.mux
 }
 
+func (s *Server) Mux() *http.ServeMux {
+	return s.mux
+}
+
 func (s *Server) routes() {
 	// Authenticated routes
 	auth := s.mux
