@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"math"
+
 	"github.com/ehrlich-b/ground/internal/model"
 	_ "modernc.org/sqlite"
 )
@@ -413,6 +415,101 @@ func scanClaims(rows *sql.Rows) ([]model.Claim, error) {
 	return claims, rows.Err()
 }
 
+// --- Claims By Topic ---
+
+// ListClaimsByTopic returns claims whose embeddings are most similar to the given topic's embedding.
+// Only returns claims above the similarity threshold (0.3), sorted by similarity descending.
+func (s *Store) ListClaimsByTopic(topicSlug string, limit int) ([]model.Claim, error) {
+	// Get topic embedding
+	topic, err := s.GetTopicBySlug(topicSlug)
+	if err != nil {
+		return nil, fmt.Errorf("get topic for claims: %w", err)
+	}
+	if len(topic.Embedding) == 0 {
+		return nil, fmt.Errorf("topic %s has no embedding", topicSlug)
+	}
+
+	// Get all claims with embeddings
+	rows, err := s.db.Query(
+		`SELECT id, proposition, embedding, groundedness, effective_groundedness, contestation, status,
+		        adjudicated_value, adjudicated_at, adjudicated_by, adjudication_reasoning, parent_claim_id,
+		        created_at, computed_at
+		 FROM claims WHERE embedding IS NOT NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("list claims for topic: %w", err)
+	}
+	defer rows.Close()
+
+	allClaims, err := scanClaims(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	// Compute similarity and filter
+	type scored struct {
+		claim model.Claim
+		sim   float64
+	}
+	topicVec := unmarshalVec(topic.Embedding)
+	var matches []scored
+	for _, c := range allClaims {
+		if len(c.Embedding) == 0 {
+			continue
+		}
+		claimVec := unmarshalVec(c.Embedding)
+		sim := cosine(topicVec, claimVec)
+		if sim > 0.3 {
+			matches = append(matches, scored{claim: c, sim: sim})
+		}
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].sim > matches[j].sim
+	})
+
+	if limit > 0 && len(matches) > limit {
+		matches = matches[:limit]
+	}
+
+	result := make([]model.Claim, len(matches))
+	for i, m := range matches {
+		result[i] = m.claim
+	}
+	return result, nil
+}
+
+// cosine computes cosine similarity between two float32 slices encoded as little-endian bytes.
+func cosine(a, b []float32) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot, normA, normB float64
+	for i := range a {
+		ai, bi := float64(a[i]), float64(b[i])
+		dot += ai * bi
+		normA += ai * ai
+		normB += bi * bi
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
+}
+
+// unmarshalVec deserializes little-endian bytes to float32 slice.
+func unmarshalVec(b []byte) []float32 {
+	if len(b) == 0 {
+		return nil
+	}
+	n := len(b) / 4
+	v := make([]float32, n)
+	for i := range n {
+		bits := uint32(b[i*4]) | uint32(b[i*4+1])<<8 | uint32(b[i*4+2])<<16 | uint32(b[i*4+3])<<24
+		v[i] = math.Float32frombits(bits)
+	}
+	return v
+}
+
 // --- Claim/Topic Embedding Queries ---
 
 // ListClaimEmbeddings returns lightweight claim data for duplicate detection.
@@ -740,6 +837,22 @@ func (s *Store) HasCycle(claimID, dependsOnID string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func (s *Store) GetDependencyByClaimPair(claimID, dependsOnID string) (*model.Dependency, error) {
+	var d model.Dependency
+	err := s.db.QueryRow(
+		`SELECT id, claim_id, depends_on_id, strength, reasoning, created_at
+		 FROM dependencies WHERE claim_id = ? AND depends_on_id = ?`,
+		claimID, dependsOnID,
+	).Scan(&d.ID, &d.ClaimID, &d.DependsOnID, &d.Strength, &d.Reasoning, &d.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get dependency by claim pair: %w", err)
+	}
+	return &d, nil
 }
 
 func scanDependencies(rows *sql.Rows) ([]model.Dependency, error) {

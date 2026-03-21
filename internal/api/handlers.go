@@ -246,6 +246,22 @@ func (s *Server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleListClaimsByTopic(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	limit := parseIntParam(r, "limit", 100)
+
+	claims, err := s.store.ListClaimsByTopic(slug, limit)
+	if err != nil {
+		if strings.Contains(err.Error(), "get topic") {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "topic not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list claims by topic", nil)
+		return
+	}
+	writeData(w, http.StatusOK, claims)
+}
+
 // --- Claims ---
 
 func (s *Server) handleListClaims(w http.ResponseWriter, r *http.Request) {
@@ -782,6 +798,12 @@ func (s *Server) handleCreateDependency(w http.ResponseWriter, r *http.Request) 
 		Reasoning:   reasoning,
 	}
 	if err := s.store.CreateDependency(dep); err != nil {
+		// Check if this is a duplicate (UNIQUE constraint violation)
+		existing, lookupErr := s.store.GetDependencyByClaimPair(req.ClaimID, req.DependsOnID)
+		if lookupErr == nil && existing != nil {
+			writeData(w, http.StatusOK, map[string]any{"dependency": existing})
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to create dependency", nil)
 		return
 	}

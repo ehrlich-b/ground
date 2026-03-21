@@ -58,6 +58,9 @@ func (s *Server) routes() {
 	auth.Handle("GET /api/topics/{slug}", http.HandlerFunc(s.handleGetTopic))
 	auth.Handle("POST /api/topics", s.authMiddleware(http.HandlerFunc(s.requireAdmin(s.handleCreateTopic))))
 
+	// Claims (topic-filtered must come before {slug} catch-all — it's under topics)
+	auth.Handle("GET /api/topics/{slug}/claims", http.HandlerFunc(s.handleListClaimsByTopic))
+
 	// Claims
 	auth.Handle("GET /api/claims", http.HandlerFunc(s.handleListClaims))
 	auth.Handle("GET /api/claims/{id}", http.HandlerFunc(s.handleGetClaim))
