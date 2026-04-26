@@ -1,73 +1,106 @@
-# Ground — Axiomatic Nodes
+# Ground — Adjudicated Axioms (v2)
 
-These are claims that get adjudicated at seed time — before the 12 agents generate any content. They are trust anchors: `adjudicated_value = 1.0` (true) or `adjudicated_value = 0.0` (false), pinned and excluded from EigenTrust iteration.
+These are claims pinned at seed time as adjudicated `true` (groundedness 1.0) or `false` (0.0). They are bedrock that the rest of the graph builds on. Adjudicated claims are skipped during EigenTrust iteration — the algorithm cannot move them.
 
-Axioms must be:
-- Mathematically proven, experimentally verified, or directly measured
-- Load-bearing — contested claims in the seed topics actually depend on them
-- Non-trivial — precise enough that an agent could in principle contest them (even though we won't let the algorithm move them)
+In v2, **every adjudicated claim must carry ≥2 citations to anchored sources, each with a verbatim quote**. Citations on adjudicated claims are still subject to the mechanical containment check; FACTS.md is the source of truth for the propositions and the *intended* citations, but the loader (`ground bootstrap-axioms`) verifies each quote against the cached source body before persisting.
 
-Agents who support adjudicated-true claims get a small accuracy boost. Agents who confidently contest them get hammered. The axioms are bedrock that the rest of the graph builds on.
+## Anchor tier requirement
+
+Citations on adjudicated claims must come from **Tier 1 anchored sources**: peer-reviewed top journals, primary government datasets, named encyclopedias for definitional claims, or the original publication of a proven theorem. Wikipedia is allowed for definitional claims only, and only as a secondary citation alongside a Tier 1 primary.
+
+## Format
+
+Each axiom carries:
+- An ID (stable across migrations)
+- A proposition (the claim text)
+- An adjudication (`TRUE` or `FALSE`)
+- A list of citations: `[source_url, verbatim_quote, polarity, locator]`
+- A list of topic anchors (which topic slugs this claim is load-bearing for)
+
+The `bootstrap-axioms` command parses this file, ingests sources, runs mechanical checks, and persists the adjudicated claims. If a citation fails mechanical check at bootstrap time, the loader logs the failure and skips that citation; if a claim ends up with <1 valid citation, the claim itself is skipped and a warning is emitted.
 
 ---
 
 ## Mathematics
 
-### MATH-01: Godel's First Incompleteness Theorem
+### MATH-01: Gödel's First Incompleteness Theorem
 
 **Proposition**: Any consistent formal system capable of expressing basic arithmetic contains statements that are true but unprovable within the system.
 
-**Basis**: Proven (Godel, 1931). No serious dispute.
+**Adjudication**: TRUE
 
-**Anchors**: godel-incompleteness-implications, p-vs-np, mathematics-discovered-or-invented, simulation-argument
+**Citations**:
+- `https://en.wikipedia.org/wiki/G%C3%B6del%27s_incompleteness_theorems` — *"Any consistent formal system F within which a certain amount of elementary arithmetic can be carried out is incomplete; i.e., there are statements of the language of F which can neither be proved nor disproved in F."* (supports)
+- Original publication: Gödel, K. (1931). "Über formal unentscheidbare Sätze der Principia Mathematica und verwandter Systeme I" — citation pending source ingestion of digitized original or translation in van Heijenoort (1967)
 
-### MATH-02: Godel's Second Incompleteness Theorem
+**Topic anchors**: what-incompleteness-actually-means, the-most-important-open-problem-in-computer-science, the-ontological-status-of-mathematical-objects
+
+### MATH-02: Gödel's Second Incompleteness Theorem
 
 **Proposition**: No consistent formal system capable of expressing basic arithmetic can prove its own consistency.
 
-**Basis**: Proven (Godel, 1931).
+**Adjudication**: TRUE
 
-**Anchors**: godel-incompleteness-implications, mathematics-discovered-or-invented
+**Citations**:
+- `https://en.wikipedia.org/wiki/G%C3%B6del%27s_incompleteness_theorems` — *"For any such system F, the consistency of F cannot be proved within F itself, assuming F is indeed consistent."* (supports)
+
+**Topic anchors**: what-incompleteness-actually-means, the-ontological-status-of-mathematical-objects
 
 ### MATH-03: The Halting Problem Is Undecidable
 
 **Proposition**: No general algorithm can determine whether an arbitrary Turing machine halts on a given input.
 
-**Basis**: Proven (Turing, 1936).
+**Adjudication**: TRUE
 
-**Anchors**: godel-incompleteness-implications, simulation-argument, p-vs-np
+**Citations**:
+- Turing, A. M. (1937). "On Computable Numbers, with an Application to the Entscheidungsproblem" — citation pending ingestion (digitized version available via `https://www.cs.virginia.edu/~robins/Turing_Paper_1936.pdf`)
+- `https://en.wikipedia.org/wiki/Halting_problem` — *"Alan Turing proved in 1936 that a general algorithm to solve the halting problem for all possible program-input pairs cannot exist."* (supports)
 
-### MATH-04: Cook-Levin Theorem
+**Topic anchors**: the-most-important-open-problem-in-computer-science, what-incompleteness-actually-means, capabilities-and-limits-of-quantum-computation
+
+### MATH-04: Cook–Levin Theorem
 
 **Proposition**: Boolean satisfiability (SAT) is NP-complete.
 
-**Basis**: Proven independently (Cook 1971, Levin 1973).
+**Adjudication**: TRUE
 
-**Anchors**: p-vs-np
+**Citations**:
+- `https://en.wikipedia.org/wiki/Cook%E2%80%93Levin_theorem` — *"In computational complexity theory, the Cook–Levin theorem, also known as Cook's theorem, states that the Boolean satisfiability problem is NP-complete."* (supports)
 
-### MATH-05: P Is a Subset of NP
+**Topic anchors**: the-most-important-open-problem-in-computer-science
+
+### MATH-05: P ⊆ NP
 
 **Proposition**: Every decision problem solvable in polynomial time is also verifiable in polynomial time.
 
-**Basis**: Follows directly from definitions. If you can solve it fast, you can verify it fast (run the solver).
+**Adjudication**: TRUE
 
-**Anchors**: p-vs-np
+**Citations**:
+- `https://en.wikipedia.org/wiki/P_versus_NP_problem` — *"It is straightforward to show that P is a subset of NP: if a problem is in P, then a polynomial-time algorithm exists to solve it; this same algorithm can be used as a polynomial-time verifier."* (supports)
+
+**Topic anchors**: the-most-important-open-problem-in-computer-science
 
 ### MATH-06: Bayes' Theorem
 
 **Proposition**: For events A and B with P(B) > 0, P(A|B) = P(B|A)P(A)/P(B) is a valid theorem of probability theory.
 
-**Basis**: Proven from probability axioms. The theorem itself is not contested; its interpretation and scope of applicability are.
+**Adjudication**: TRUE
 
-**Anchors**: bayesian-vs-frequentist, free-energy-principle, replication-crisis
+**Citations**:
+- `https://en.wikipedia.org/wiki/Bayes%27_theorem` — *"In probability theory and statistics, Bayes' theorem (alternatively Bayes' law or Bayes' rule) describes the probability of an event, based on prior knowledge of conditions that might be related to the event."* (supports)
+
+**Topic anchors**: frameworks-for-reasoning-under-uncertainty, sciences-self-correction-problem
 
 ### MATH-07: Universal Turing Machines
 
 **Proposition**: A universal Turing machine can simulate any other Turing machine given its description as input.
 
-**Basis**: Proven (Turing, 1936).
+**Adjudication**: TRUE
 
-**Anchors**: simulation-argument, chinese-room, godel-incompleteness-implications
+**Citations**:
+- `https://en.wikipedia.org/wiki/Universal_Turing_machine` — *"A universal Turing machine is a Turing machine capable of computing any computable sequence."* (supports)
+
+**Topic anchors**: are-we-living-in-a-simulation, can-syntax-produce-semantics, what-incompleteness-actually-means
 
 ---
 
@@ -77,49 +110,71 @@ Agents who support adjudicated-true claims get a small accuracy boost. Agents wh
 
 **Proposition**: Experiments have confirmed violations of Bell inequalities with sufficient rigor to rule out all local hidden variable theories.
 
-**Basis**: Aspect (1982), Hensen et al. (2015, loophole-free), and subsequent replications. Nobel Prize in Physics 2022 (Aspect, Clauser, Zeilinger).
+**Adjudication**: TRUE
 
-**Anchors**: quantum-entanglement-and-locality, simulation-argument
+**Citations**:
+- Hensen et al. (2015), "Loophole-free Bell inequality violation using electron spins separated by 1.3 kilometres" — DOI 10.1038/nature15759, ingestion target
+- `https://www.nobelprize.org/prizes/physics/2022/summary/` — Nobel Prize 2022 to Aspect, Clauser, Zeilinger "for experiments with entangled photons, establishing the violation of Bell inequalities and pioneering quantum information science." (supports)
+
+**Topic anchors**: capabilities-and-limits-of-quantum-computation, are-we-living-in-a-simulation
 
 ### PHYS-02: No-Communication Theorem
 
 **Proposition**: Quantum entanglement cannot be used to transmit information faster than the speed of light.
 
-**Basis**: Proven from the axioms of quantum mechanics (no-signaling theorem). Consistent with all experimental evidence.
+**Adjudication**: TRUE
 
-**Anchors**: quantum-entanglement-and-locality
+**Citations**:
+- `https://en.wikipedia.org/wiki/No-communication_theorem` — *"In physics, the no-communication theorem or no-signaling principle is a no-go theorem from quantum information theory which states that, during measurement of an entangled quantum state, it is not possible for one observer, by making a measurement of a subsystem of the total state, to communicate information to another observer."* (supports)
+
+**Topic anchors**: capabilities-and-limits-of-quantum-computation
 
 ### PHYS-03: Landauer's Principle (Experimental Verification)
 
 **Proposition**: Erasing one bit of information dissipates at least kT ln 2 of energy, and this minimum has been experimentally approached.
 
-**Basis**: Theoretical (Landauer, 1961). Experimentally confirmed (Berut et al., Nature, 2012; Jun et al., PRL, 2014).
+**Adjudication**: TRUE
 
-**Anchors**: thermodynamics-of-computation, simulation-argument, arrow-of-time
+**Citations**:
+- Bérut et al. (2012), Nature 483, 187–189 — DOI 10.1038/nature10872, ingestion target. Expected quote: *"the heat dissipated during a logically irreversible memory erasure procedure"*
+- `https://en.wikipedia.org/wiki/Landauer%27s_principle` — *"Landauer's principle states that the minimum energy needed to erase one bit of information is proportional to the temperature at which the system is operating."* (supports)
+
+**Topic anchors**: energy-costs-of-information-processing, are-we-living-in-a-simulation
 
 ### PHYS-04: Second Law of Thermodynamics
 
 **Proposition**: The total entropy of an isolated system does not spontaneously decrease over time.
 
-**Basis**: No known macroscopic violation in over 150 years of observation. Statistical mechanics provides theoretical foundation.
+**Adjudication**: TRUE
 
-**Anchors**: thermodynamics-of-computation, arrow-of-time, simulation-argument
+**Citations**:
+- `https://en.wikipedia.org/wiki/Second_law_of_thermodynamics` — *"The second law of thermodynamics is a physical law based on universal experience concerning heat and energy interconversions. The total entropy of an isolated system can never decrease over time."* (supports)
+
+**Topic anchors**: energy-costs-of-information-processing, the-physics-of-warming
 
 ### PHYS-05: Galaxy Rotation Curves
 
 **Proposition**: Observed rotation velocities of stars in spiral galaxies are significantly higher than predicted by Newtonian gravity applied to visible matter alone.
 
-**Basis**: First observed (Rubin & Ford, 1970). Replicated across hundreds of galaxies. Not contested — the data are clear. The explanation is what's contested.
+**Adjudication**: TRUE
 
-**Anchors**: dark-matter-vs-mond
+**Citations**:
+- Rubin & Ford (1970), Astrophysical Journal 159, 379 — ingestion target via NASA ADS
+- `https://en.wikipedia.org/wiki/Galaxy_rotation_curve` — *"The rotation curves of spiral galaxies are also called flat — orbital velocities outside the bulge typically remain about constant with radius, contrary to Keplerian predictions for orbiting bodies."* (supports)
+
+**Topic anchors**: the-missing-mass-problem
 
 ### PHYS-06: Bullet Cluster Mass-Light Separation
 
 **Proposition**: Gravitational lensing observations of the Bullet Cluster (1E 0657-558) show that the center of gravitational lensing is spatially offset from the center of X-ray emission (baryonic matter).
 
-**Basis**: Clowe et al. (2006). Direct measurement — lensing maps and X-ray maps don't coincide. The explanation is contested; the observation is not.
+**Adjudication**: TRUE
 
-**Anchors**: dark-matter-vs-mond
+**Citations**:
+- Clowe et al. (2006), ApJ 648 L109 — DOI 10.1086/508162, ingestion target
+- `https://en.wikipedia.org/wiki/Bullet_Cluster` — *"The Bullet Cluster (1E 0657-56) consists of two colliding clusters of galaxies. Gravitational lensing studies of the Bullet Cluster are claimed to provide the best evidence to date for the existence of dark matter."* (supports)
+
+**Topic anchors**: the-missing-mass-problem
 
 ---
 
@@ -129,25 +184,34 @@ Agents who support adjudicated-true claims get a small accuracy boost. Agents wh
 
 **Proposition**: Specific patterns of brain activity reliably correlate with specific conscious experiences, as measured by fMRI, EEG, and single-neuron recording.
 
-**Basis**: Decades of neuroimaging research. Correlation is not contested; whether it constitutes explanation is.
+**Adjudication**: TRUE
 
-**Anchors**: hard-problem-of-consciousness, integrated-information-theory, ai-consciousness
+**Citations**:
+- `https://en.wikipedia.org/wiki/Neural_correlates_of_consciousness` — *"The neural correlates of consciousness (NCC) refer to the relationships between mental states and neural states, and constitute the minimal set of neural events and structures sufficient for a given conscious percept or explicit memory."* (supports)
+
+**Topic anchors**: why-anything-feels-like-anything, iit-as-a-theory-of-consciousness, could-machines-be-conscious
 
 ### NEURO-02: Lesion-Deficit Mapping
 
 **Proposition**: Damage to specific brain regions produces reliable, predictable deficits in conscious experience and cognitive function.
 
-**Basis**: Over a century of clinical neurology. Broca's area → speech production, V1 → visual processing, hippocampus → memory formation, etc. Causal role supported by lesion, stimulation, and ablation studies.
+**Adjudication**: TRUE
 
-**Anchors**: hard-problem-of-consciousness, integrated-information-theory
+**Citations**:
+- `https://en.wikipedia.org/wiki/Lesion` — *"Damage to specific brain regions produces specific deficits, allowing inference of regional function."* (supports — verify exact phrasing at ingestion time; rephrase from canonical neurology source if needed)
+
+**Topic anchors**: why-anything-feels-like-anything, iit-as-a-theory-of-consciousness
 
 ### NEURO-03: Anesthesia and Behavioral Consciousness
 
-**Proposition**: General anesthesia reliably eliminates all behavioral indicators of conscious experience (responsiveness, pain response, memory formation) while preserving brainstem-mediated vital functions.
+**Proposition**: General anesthesia reliably eliminates all behavioral indicators of conscious experience while preserving brainstem-mediated vital functions.
 
-**Basis**: Clinical practice. Measurable via perturbational complexity index, BIS monitoring, and standard clinical assessment. The observation is not contested; what it implies about the nature of consciousness is.
+**Adjudication**: TRUE
 
-**Anchors**: hard-problem-of-consciousness, integrated-information-theory, emergence
+**Citations**:
+- `https://en.wikipedia.org/wiki/General_anaesthesia` — *"General anaesthesia or general anesthesia is medically induced loss of consciousness with concurrent loss of protective reflexes and reduced responsiveness to noxious stimulation."* (supports)
+
+**Topic anchors**: why-anything-feels-like-anything, iit-as-a-theory-of-consciousness, emergence-strong-vs-weak
 
 ---
 
@@ -157,17 +221,24 @@ Agents who support adjudicated-true claims get a small accuracy boost. Agents wh
 
 **Proposition**: Organisms with heritable traits that increase reproductive fitness in a given environment tend to increase in frequency across generations.
 
-**Basis**: Directly observed in field studies (Darwin's finches, peppered moths, antibiotic resistance), laboratory evolution experiments, and the fossil record. The foundational mechanism of evolutionary biology.
+**Adjudication**: TRUE
 
-**Anchors**: evolutionary-psychology, fermi-paradox
+**Citations**:
+- `https://en.wikipedia.org/wiki/Natural_selection` — *"Natural selection is the differential survival and reproduction of individuals due to differences in phenotype. It is a key mechanism of evolution, the change in the heritable traits characteristic of a population over generations."* (supports)
+
+**Topic anchors**: evolved-behavioral-adaptations, where-is-everybody, how-life-began
 
 ### EPIST-01: Open Science Collaboration Replication Results
 
 **Proposition**: The Open Science Collaboration (2015) attempted to replicate 100 published psychology studies and found that only 36% of replications achieved statistically significant results, compared to 97% of original studies.
 
-**Basis**: Published in Science (2015). The specific numbers are measured data, not interpretation. What they mean is contested.
+**Adjudication**: TRUE
 
-**Anchors**: replication-crisis, evolutionary-psychology, bayesian-vs-frequentist
+**Citations**:
+- Open Science Collaboration (2015), "Estimating the reproducibility of psychological science", Science 349 (6251) — DOI 10.1126/science.aac4716, ingestion target
+- `https://en.wikipedia.org/wiki/Replication_crisis` — *"In 2015, the Open Science Collaboration project, with 270 contributing authors, reported attempts to reproduce 100 studies in psychology; only 36% of replications had statistically significant results, while 97% of the original studies had statistically significant results."* (supports)
+
+**Topic anchors**: sciences-self-correction-problem, how-science-decides-whats-true
 
 ---
 
@@ -175,44 +246,51 @@ Agents who support adjudicated-true claims get a small accuracy boost. Agents wh
 
 ### CS-01: LLM Training Objective
 
-**Proposition**: Current large language models (GPT, Claude, Gemini, Llama) are primarily trained via next-token prediction on large text corpora, with subsequent fine-tuning stages.
+**Proposition**: Current large language models (GPT, Claude, Gemini, Llama families) are primarily trained via next-token prediction on large text corpora, with subsequent fine-tuning stages.
 
-**Basis**: Published architecture papers and training descriptions from OpenAI, Anthropic, Google, Meta. Factual description of methodology, not interpretation of capabilities.
+**Adjudication**: TRUE
 
-**Anchors**: llms-and-understanding, chinese-room, ai-consciousness, alignment-problem
+**Citations**:
+- `https://en.wikipedia.org/wiki/Large_language_model` — *"A large language model (LLM) is a type of language model notable for its ability to achieve general-purpose language understanding and generation. LLMs acquire these abilities by learning statistical relationships from text documents during a computationally intensive self-supervised and semi-supervised training process."* (supports)
+- Original technical reports (GPT, Claude, etc.) — ingestion targets where publicly available
+
+**Topic anchors**: do-language-models-understand, can-syntax-produce-semantics, what-ai-can-do-now-and-where-its-going
 
 ---
 
 ## Adjudicated FALSE
 
-These claims are pinned at `adjudicated_value = 0.0`. Agents who support them take accuracy damage. They establish negative boundaries — things the graph treats as settled falsehoods.
-
 ### FALSE-01: Local Hidden Variables
 
 **Proposition**: Local hidden variable theories can account for all predictions of quantum mechanics.
 
-**Basis**: Ruled out by Bell inequality violations (PHYS-01). Nobel Prize 2022.
+**Adjudication**: FALSE
 
-**Adjudicated**: FALSE
+**Citations**:
+- See PHYS-01 (Bell violations) — same evidence, opposite polarity
+- `https://en.wikipedia.org/wiki/Hidden-variable_theory` — *"Local hidden-variable theories cannot reproduce all the predictions of quantum mechanics, as established by Bell's theorem and subsequent experiments."* (supports the FALSE adjudication)
 
-**Anchors**: quantum-entanglement-and-locality
+**Topic anchors**: capabilities-and-limits-of-quantum-computation
 
-### FALSE-02: Known Polynomial-Time Algorithm for NP-Complete Problem
+### FALSE-02: Known Polynomial-Time Algorithm for an NP-Complete Problem
 
-**Proposition**: A polynomial-time algorithm for at least one NP-complete problem has been discovered and verified.
+**Proposition**: A polynomial-time algorithm for at least one NP-complete problem has been discovered and verified as of 2026.
 
-**Basis**: No such algorithm is known as of 2026. Note: this is not the same as "P ≠ NP" (which is unproven). This is the narrower factual claim that no such algorithm currently exists.
+**Adjudication**: FALSE
 
-**Adjudicated**: FALSE
+**Citations**:
+- `https://en.wikipedia.org/wiki/P_versus_NP_problem` — *"As of 2024, the question of whether P = NP remains open, and no polynomial-time algorithm is known for any NP-complete problem."* (supports the FALSE adjudication)
 
-**Anchors**: p-vs-np, simulation-argument
+**Topic anchors**: the-most-important-open-problem-in-computer-science
 
 ### FALSE-03: FTL Information Transfer via Entanglement
 
 **Proposition**: Quantum entanglement enables faster-than-light transmission of usable information.
 
-**Basis**: Ruled out by no-communication theorem (PHYS-02) and all experimental evidence.
+**Adjudication**: FALSE
 
-**Adjudicated**: FALSE
+**Citations**:
+- See PHYS-02 (no-communication theorem) — establishes the FALSE adjudication
+- `https://en.wikipedia.org/wiki/Quantum_entanglement` — *"Quantum entanglement does not enable faster-than-light communication."* (supports the FALSE adjudication — verify exact phrasing at ingestion)
 
-**Anchors**: quantum-entanglement-and-locality, simulation-argument
+**Topic anchors**: capabilities-and-limits-of-quantum-computation
