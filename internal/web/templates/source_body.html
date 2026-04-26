@@ -1,0 +1,53 @@
+{{define "title"}}Source body{{end}}
+{{define "content"}}
+<h1>Source body</h1>
+<p>
+    <a href="/source/{{.Source.ID}}">&larr; back to source</a>
+    &middot;
+    <a href="{{.Source.URL}}" target="_blank">original URL</a>
+</p>
+<p><strong>Type:</strong> {{.Source.Type}} &middot; <strong>Citations:</strong> {{len .Citations}}</p>
+
+<style>
+    .body-viewer {
+        font-family: Georgia, "Times New Roman", serif;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        max-width: 760px;
+        padding: 1.25rem 1.5rem;
+        background: var(--surface, #1a1a1a);
+        border: 1px solid var(--border, #333);
+        border-radius: 6px;
+    }
+    .body-viewer mark.cite {
+        padding: 0 2px;
+        border-radius: 2px;
+        cursor: help;
+    }
+    .body-viewer mark.cite-supports     { background: rgba(129, 199, 132, 0.35); }
+    .body-viewer mark.cite-contradicts  { background: rgba(229, 115, 115, 0.35); }
+    .body-viewer mark.cite-qualifies    { background: rgba(251, 192, 45, 0.35); }
+    .legend { display: flex; gap: 1rem; font-size: 0.9em; margin-bottom: 0.75rem; }
+    .legend span { padding: 0 6px; border-radius: 2px; }
+</style>
+
+<div class="legend">
+    <span class="cite-supports" style="background: rgba(129, 199, 132, 0.35); padding: 0 6px;">supports</span>
+    <span class="cite-contradicts" style="background: rgba(229, 115, 115, 0.35); padding: 0 6px;">contradicts</span>
+    <span class="cite-qualifies" style="background: rgba(251, 192, 45, 0.35); padding: 0 6px;">qualifies</span>
+</div>
+
+<div class="body-viewer">{{.Highlights}}</div>
+
+{{if .Citations}}
+<h2 style="margin-top: 2rem">Citations</h2>
+<ul>
+{{range .Citations}}
+    <li>
+        [{{.Polarity}}] on <a href="/claim/{{.ClaimID}}">{{.ClaimID}}</a>
+        &mdash; &ldquo;{{truncate .VerbatimQuote 120}}&rdquo;
+    </li>
+{{end}}
+</ul>
+{{end}}
+{{end}}

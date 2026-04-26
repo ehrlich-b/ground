@@ -10,6 +10,8 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/ehrlich-b/ground/internal/db"
@@ -23,13 +25,18 @@ var templateFS embed.FS
 //go:embed static/*
 var staticFS embed.FS
 
+// BodyLoader returns the cached body bytes for a source. The web layer uses it
+// only for the source-body viewer; nil is fine if you only want JSON pages.
+type BodyLoader func(src *model.Source) ([]byte, error)
+
 type Server struct {
 	store     *db.Store
+	loadBody  BodyLoader
 	templates map[string]*template.Template
 }
 
-func NewServer(store *db.Store) *Server {
-	s := &Server{store: store}
+func NewServer(store *db.Store, loadBody BodyLoader) *Server {
+	s := &Server{store: store, loadBody: loadBody}
 	s.loadTemplates()
 	return s
 }
@@ -45,6 +52,7 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /agent/{id}", s.handleAgent)
 	mux.HandleFunc("GET /sources", s.handleSources)
 	mux.HandleFunc("GET /source/{id}", s.handleSource)
+	mux.HandleFunc("GET /source/{id}/body", s.handleSourceBody)
 	mux.HandleFunc("GET /claim/{id}", s.handleClaim)
 	mux.HandleFunc("GET /lenses", s.handleLenses)
 	mux.HandleFunc("GET /lens/{slug}", s.handleLens)
@@ -185,6 +193,31 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 	}{srcs, creds})
 }
 
+func (s *Server) handleSourceBody(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	src, err := s.store.GetSource(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if s.loadBody == nil {
+		http.Error(w, "body viewer not configured", http.StatusNotImplemented)
+		return
+	}
+	body, err := s.loadBody(src)
+	if err != nil {
+		http.Error(w, "load body: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	citations, _ := s.store.ListCitationsBySource(id)
+	highlighted := highlightQuotes(string(body), citations)
+	s.render(w, "source_body", struct {
+		Source     *model.Source
+		Citations  []model.Citation
+		Highlights template.HTML
+	}{src, citations, highlighted})
+}
+
 func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	src, err := s.store.GetSource(id)
@@ -267,6 +300,48 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "graph", nil)
+}
+
+// highlightQuotes wraps every citation's verbatim quote inside the source body
+// in <mark> tags with a polarity-coded class. Overlaps are resolved
+// left-to-right: the earliest-starting citation wins, and any later citation
+// whose span overlaps it is dropped. This is good enough for the viewer; the
+// underlying citations remain in the sidebar list.
+func highlightQuotes(body string, citations []model.Citation) template.HTML {
+	type span struct {
+		start, end int
+		polarity   string
+		citID      string
+	}
+	var spans []span
+	for _, c := range citations {
+		if c.VerbatimQuote == "" {
+			continue
+		}
+		idx := strings.Index(body, c.VerbatimQuote)
+		if idx < 0 {
+			continue
+		}
+		spans = append(spans, span{idx, idx + len(c.VerbatimQuote), c.Polarity, c.ID})
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+
+	var b strings.Builder
+	cursor := 0
+	for _, sp := range spans {
+		if sp.start < cursor {
+			continue
+		}
+		b.WriteString(template.HTMLEscapeString(body[cursor:sp.start]))
+		fmt.Fprintf(&b, `<mark class="cite cite-%s" data-citation-id="%s">`,
+			template.HTMLEscapeString(sp.polarity),
+			template.HTMLEscapeString(sp.citID))
+		b.WriteString(template.HTMLEscapeString(body[sp.start:sp.end]))
+		b.WriteString(`</mark>`)
+		cursor = sp.end
+	}
+	b.WriteString(template.HTMLEscapeString(body[cursor:]))
+	return template.HTML(b.String())
 }
 
 func truncate(s string, n int) string {

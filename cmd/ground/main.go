@@ -90,7 +90,12 @@ func serveCmd() *cobra.Command {
 			}
 
 			srv := api.NewServer(store, embedder, []byte(secret))
-			webSrv := web.NewServer(store)
+			blobs, err := sources.NewFileBlobStore()
+			if err != nil {
+				return fmt.Errorf("init blob store: %w", err)
+			}
+			loadBody := func(src *model.Source) ([]byte, error) { return blobs.Get(src.BodyBlobID) }
+			webSrv := web.NewServer(store, loadBody)
 			webSrv.Mount(srv.Mux())
 			log.Printf("listening on :%s", port)
 			return http.ListenAndServe(":"+port, srv.Handler())
