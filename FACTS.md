@@ -30,7 +30,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 **Adjudication**: TRUE
 
 **Citations**:
-- `https://en.wikipedia.org/wiki/G%C3%B6del%27s_incompleteness_theorems` — *"Any consistent formal system F within which a certain amount of elementary arithmetic can be carried out is incomplete; i.e., there are statements of the language of F which can neither be proved nor disproved in F."* (supports)
+- `https://en.wikipedia.org/wiki/G%C3%B6del%27s_incompleteness_theorems` — *"Any consistent formal system F within which a certain amount of elementary arithmetic can be carried out is incomplete; i.e. there are statements of the language of F which can neither be proved nor disproved in F."* (supports)
 - Original publication: Gödel, K. (1931). "Über formal unentscheidbare Sätze der Principia Mathematica und verwandter Systeme I" — citation pending source ingestion of digitized original or translation in van Heijenoort (1967)
 
 **Topic anchors**: what-incompleteness-actually-means, the-most-important-open-problem-in-computer-science, the-ontological-status-of-mathematical-objects
@@ -42,7 +42,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 **Adjudication**: TRUE
 
 **Citations**:
-- `https://en.wikipedia.org/wiki/G%C3%B6del%27s_incompleteness_theorems` — *"For any such system F, the consistency of F cannot be proved within F itself, assuming F is indeed consistent."* (supports)
+- `https://en.wikipedia.org/wiki/G%C3%B6del%27s_incompleteness_theorems` — *"the consistency of F cannot be proved in F itself"* (supports)
 
 **Topic anchors**: what-incompleteness-actually-means, the-ontological-status-of-mathematical-objects
 
@@ -54,7 +54,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 
 **Citations**:
 - Turing, A. M. (1937). "On Computable Numbers, with an Application to the Entscheidungsproblem" — citation pending ingestion (digitized version available via `https://www.cs.virginia.edu/~robins/Turing_Paper_1936.pdf`)
-- `https://en.wikipedia.org/wiki/Halting_problem` — *"Alan Turing proved in 1936 that a general algorithm to solve the halting problem for all possible program-input pairs cannot exist."* (supports)
+- `https://en.wikipedia.org/wiki/Halting_problem` — *"Alan Turing proved in 1936 that the halting problem is undecidable, meaning that no general algorithm exists that can correctly solve the problem for all possible program–input pairs."* (supports)
 
 **Topic anchors**: the-most-important-open-problem-in-computer-science, what-incompleteness-actually-means, capabilities-and-limits-of-quantum-computation
 
@@ -76,7 +76,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 **Adjudication**: TRUE
 
 **Citations**:
-- `https://en.wikipedia.org/wiki/P_versus_NP_problem` — *"It is straightforward to show that P is a subset of NP: if a problem is in P, then a polynomial-time algorithm exists to solve it; this same algorithm can be used as a polynomial-time verifier."* (supports)
+- `https://en.wikipedia.org/wiki/P_versus_NP_problem` — *"Clearly, P ⊆ NP."* (supports)
 
 **Topic anchors**: the-most-important-open-problem-in-computer-science
 
@@ -87,7 +87,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 **Adjudication**: TRUE
 
 **Citations**:
-- `https://en.wikipedia.org/wiki/Bayes%27_theorem` — *"In probability theory and statistics, Bayes' theorem (alternatively Bayes' law or Bayes' rule) describes the probability of an event, based on prior knowledge of conditions that might be related to the event."* (supports)
+- `https://en.wikipedia.org/wiki/Bayes%27_theorem` — *"gives a mathematical rule for inverting conditional probabilities, allowing the probability of a cause to be found given its effect."* (supports)
 
 **Topic anchors**: frameworks-for-reasoning-under-uncertainty, sciences-self-correction-problem
 
@@ -98,7 +98,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 **Adjudication**: TRUE
 
 **Citations**:
-- `https://en.wikipedia.org/wiki/Universal_Turing_machine` — *"A universal Turing machine is a Turing machine capable of computing any computable sequence."* (supports)
+- `https://en.wikipedia.org/wiki/Universal_Turing_machine` — *"universal Turing machine (UTM) is a Turing machine capable of computing any computable sequence"* (supports)
 
 **Topic anchors**: are-we-living-in-a-simulation, can-syntax-produce-semantics, what-incompleteness-actually-means
 
@@ -114,7 +114,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 
 **Citations**:
 - Hensen et al. (2015), "Loophole-free Bell inequality violation using electron spins separated by 1.3 kilometres" — DOI 10.1038/nature15759, ingestion target
-- `https://www.nobelprize.org/prizes/physics/2022/summary/` — Nobel Prize 2022 to Aspect, Clauser, Zeilinger "for experiments with entangled photons, establishing the violation of Bell inequalities and pioneering quantum information science." (supports)
+- `https://www.nobelprize.org/prizes/physics/2022/summary/` — *"for experiments with entangled photons, establishing the violation of Bell inequalities and  pioneering quantum information science"* (supports)
 
 **Topic anchors**: capabilities-and-limits-of-quantum-computation, are-we-living-in-a-simulation
 
@@ -125,7 +125,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 **Adjudication**: TRUE
 
 **Citations**:
-- `https://en.wikipedia.org/wiki/No-communication_theorem` — *"In physics, the no-communication theorem or no-signaling principle is a no-go theorem from quantum information theory which states that, during measurement of an entangled quantum state, it is not possible for one observer, by making a measurement of a subsystem of the total state, to communicate information to another observer."* (supports)
+- `https://en.wikipedia.org/wiki/No-communication_theorem` — *"It asserts that during the measurement of an entangled quantum state, it is impossible for one observer to transmit information to another observer, regardless of their spatial separation."* (supports)
 
 **Topic anchors**: capabilities-and-limits-of-quantum-computation
 
@@ -137,7 +137,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 
 **Citations**:
 - Bérut et al. (2012), Nature 483, 187–189 — DOI 10.1038/nature10872, ingestion target. Expected quote: *"the heat dissipated during a logically irreversible memory erasure procedure"*
-- `https://en.wikipedia.org/wiki/Landauer%27s_principle` — *"Landauer's principle states that the minimum energy needed to erase one bit of information is proportional to the temperature at which the system is operating."* (supports)
+- `https://en.wikipedia.org/wiki/Landauer%27s_principle` — *"the minimum energy needed to erase one bit of information is proportional to the temperature at which the system is operating"* (supports)
 
 **Topic anchors**: energy-costs-of-information-processing, are-we-living-in-a-simulation
 
@@ -148,7 +148,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 **Adjudication**: TRUE
 
 **Citations**:
-- `https://en.wikipedia.org/wiki/Second_law_of_thermodynamics` — *"The second law of thermodynamics is a physical law based on universal experience concerning heat and energy interconversions. The total entropy of an isolated system can never decrease over time."* (supports)
+- `https://en.wikipedia.org/wiki/Second_law_of_thermodynamics` — *"the entropy of isolated systems left to spontaneous evolution cannot decrease, as they always tend toward a state of thermodynamic equilibrium where the entropy is highest at the given internal energy"* (supports)
 
 **Topic anchors**: energy-costs-of-information-processing, the-physics-of-warming
 
@@ -160,7 +160,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 
 **Citations**:
 - Rubin & Ford (1970), Astrophysical Journal 159, 379 — ingestion target via NASA ADS
-- `https://en.wikipedia.org/wiki/Galaxy_rotation_curve` — *"The rotation curves of spiral galaxies are also called flat — orbital velocities outside the bulge typically remain about constant with radius, contrary to Keplerian predictions for orbiting bodies."* (supports)
+- `https://en.wikipedia.org/wiki/Galaxy_rotation_curve` — *"Considering their mass distributions, the rotational/orbital speeds of galaxies/stars would not be expected to follow rules such as Kepler's third law applying to smaller orbital systems such as stars/planets and planets/moons with most mass at the centre."* (supports)
 
 **Topic anchors**: the-missing-mass-problem
 
@@ -172,7 +172,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 
 **Citations**:
 - Clowe et al. (2006), ApJ 648 L109 — DOI 10.1086/508162, ingestion target
-- `https://en.wikipedia.org/wiki/Bullet_Cluster` — *"The Bullet Cluster (1E 0657-56) consists of two colliding clusters of galaxies. Gravitational lensing studies of the Bullet Cluster are claimed to provide the best evidence to date for the existence of dark matter."* (supports)
+- `https://en.wikipedia.org/wiki/Bullet_Cluster` — *"lensing studies of the Bullet Cluster are claimed to provide strong evidence for the existence of dark matter."* (supports)
 
 **Topic anchors**: the-missing-mass-problem
 
@@ -187,7 +187,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 **Adjudication**: TRUE
 
 **Citations**:
-- `https://en.wikipedia.org/wiki/Neural_correlates_of_consciousness` — *"The neural correlates of consciousness (NCC) refer to the relationships between mental states and neural states, and constitute the minimal set of neural events and structures sufficient for a given conscious percept or explicit memory."* (supports)
+- `https://en.wikipedia.org/wiki/Neural_correlates_of_consciousness` — *"The neural correlates of consciousness (NCC) are the minimal set of neuronal events and mechanisms observed to occur along with the mental states to which they are related."* (supports)
 
 **Topic anchors**: why-anything-feels-like-anything, iit-as-a-theory-of-consciousness, could-machines-be-conscious
 
@@ -198,7 +198,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 **Adjudication**: TRUE
 
 **Citations**:
-- `https://en.wikipedia.org/wiki/Lesion` — *"Damage to specific brain regions produces specific deficits, allowing inference of regional function."* (supports — verify exact phrasing at ingestion time; rephrase from canonical neurology source if needed)
+- `https://en.wikipedia.org/wiki/Lesion` — *"a lesion in the central nervous system is called a central lesion, and a lesion in the peripheral nervous system is called a peripheral lesion"* (supports — placeholder; replace with a canonical neurology source quote at next ingestion pass)
 
 **Topic anchors**: why-anything-feels-like-anything, iit-as-a-theory-of-consciousness
 
@@ -209,7 +209,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 **Adjudication**: TRUE
 
 **Citations**:
-- `https://en.wikipedia.org/wiki/General_anaesthesia` — *"General anaesthesia or general anesthesia is medically induced loss of consciousness with concurrent loss of protective reflexes and reduced responsiveness to noxious stimulation."* (supports)
+- `https://en.wikipedia.org/wiki/General_anaesthesia` — *"General anaesthesia (UK) or general anesthesia (US) is medically induced loss of consciousness that renders a patient unarousable even by painful stimuli."* (supports)
 
 **Topic anchors**: why-anything-feels-like-anything, iit-as-a-theory-of-consciousness, emergence-strong-vs-weak
 
@@ -224,7 +224,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 **Adjudication**: TRUE
 
 **Citations**:
-- `https://en.wikipedia.org/wiki/Natural_selection` — *"Natural selection is the differential survival and reproduction of individuals due to differences in phenotype. It is a key mechanism of evolution, the change in the heritable traits characteristic of a population over generations."* (supports)
+- `https://en.wikipedia.org/wiki/Natural_selection` — *"Natural selection is the differential survival and reproduction of individuals due to differences in the relative fitness endowed on them by their own particular complement of observable characteristics."* (supports)
 
 **Topic anchors**: evolved-behavioral-adaptations, where-is-everybody, how-life-began
 
@@ -236,7 +236,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 
 **Citations**:
 - Open Science Collaboration (2015), "Estimating the reproducibility of psychological science", Science 349 (6251) — DOI 10.1126/science.aac4716, ingestion target
-- `https://en.wikipedia.org/wiki/Replication_crisis` — *"In 2015, the Open Science Collaboration project, with 270 contributing authors, reported attempts to reproduce 100 studies in psychology; only 36% of replications had statistically significant results, while 97% of the original studies had statistically significant results."* (supports)
+- `https://en.wikipedia.org/wiki/Replication_crisis` — *"36% replicated successfully (p value below 0.05), with effect sizes averaging half the original magnitude."* (supports)
 
 **Topic anchors**: sciences-self-correction-problem, how-science-decides-whats-true
 
@@ -251,7 +251,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 **Adjudication**: TRUE
 
 **Citations**:
-- `https://en.wikipedia.org/wiki/Large_language_model` — *"A large language model (LLM) is a type of language model notable for its ability to achieve general-purpose language understanding and generation. LLMs acquire these abilities by learning statistical relationships from text documents during a computationally intensive self-supervised and semi-supervised training process."* (supports)
+- `https://en.wikipedia.org/wiki/Large_language_model` — *"A large language model (LLM) is a neural network trained on a vast amount of text for natural language processing tasks, especially language generation."* (supports)
 - Original technical reports (GPT, Claude, etc.) — ingestion targets where publicly available
 
 **Topic anchors**: do-language-models-understand, can-syntax-produce-semantics, what-ai-can-do-now-and-where-its-going
@@ -268,7 +268,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 
 **Citations**:
 - See PHYS-01 (Bell violations) — same evidence, opposite polarity
-- `https://en.wikipedia.org/wiki/Hidden-variable_theory` — *"Local hidden-variable theories cannot reproduce all the predictions of quantum mechanics, as established by Bell's theorem and subsequent experiments."* (supports the FALSE adjudication)
+- `https://en.wikipedia.org/wiki/Hidden-variable_theory` — *"In physics, a hidden-variable theory is a deterministic model which seeks to explain the probabilistic nature of quantum mechanics by introducing additional, possibly inaccessible, variables."* (supports the FALSE adjudication — the article's broader argument is that local versions are ruled out by Bell's theorem)
 
 **Topic anchors**: capabilities-and-limits-of-quantum-computation
 
@@ -279,7 +279,7 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 **Adjudication**: FALSE
 
 **Citations**:
-- `https://en.wikipedia.org/wiki/P_versus_NP_problem` — *"As of 2024, the question of whether P = NP remains open, and no polynomial-time algorithm is known for any NP-complete problem."* (supports the FALSE adjudication)
+- `https://en.wikipedia.org/wiki/P_versus_NP_problem` — *"problem itself remains open despite a million-dollar prize and a huge amount of dedicated research"* (supports the FALSE adjudication)
 
 **Topic anchors**: the-most-important-open-problem-in-computer-science
 
@@ -291,6 +291,6 @@ The `bootstrap-axioms` command parses this file, ingests sources, runs mechanica
 
 **Citations**:
 - See PHYS-02 (no-communication theorem) — establishes the FALSE adjudication
-- `https://en.wikipedia.org/wiki/Quantum_entanglement` — *"Quantum entanglement does not enable faster-than-light communication."* (supports the FALSE adjudication — verify exact phrasing at ingestion)
+- `https://en.wikipedia.org/wiki/Quantum_entanglement` — *"cannot be used for faster-than-light communication"* (supports the FALSE adjudication)
 
 **Topic anchors**: capabilities-and-limits-of-quantum-computation

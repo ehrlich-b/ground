@@ -1,0 +1,114 @@
+# Ground anchor sources (v2 seed)
+#
+# Anchors are admin-curated source priors. Each entry pins a baseline
+# credibility and tier for a source URL; the runtime EigenTrust pass blends
+# anchor priors with the citation graph and audit aggregate to derive the
+# computed credibility per epoch. Lenses can override per-source values, but
+# the anchor list is the public-baseline source of trust.
+#
+# Tier conventions:
+#   1 — Primary literature (peer-reviewed top journals, government datasets,
+#       original publications of named results, official prize bodies).
+#   2 — Reputable secondary references (Wikipedia, Stanford Encyclopedia of
+#       Philosophy, encyclopedic monographs). Allowed for definitional claims.
+#   3 — Reputable but mixed (mainstream news, established blogs, preprint
+#       servers without peer review). Use sparingly as anchor-priors.
+#
+# Adding/removing an anchor is a deliberate, reviewable change. Keep the list
+# small and well-justified. Run `./ground bootstrap-anchors anchors.yaml` after
+# editing.
+
+anchors:
+  # --- Mathematics ---
+  - url: https://en.wikipedia.org/wiki/G%C3%B6del%27s_incompleteness_theorems
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on Gödel's incompleteness theorems; well-cited definitional source for the canonical statement and historical context.
+  - url: https://en.wikipedia.org/wiki/Halting_problem
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on the halting problem; standard definitional source.
+  - url: https://en.wikipedia.org/wiki/Cook%E2%80%93Levin_theorem
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on the Cook–Levin theorem; standard definitional source for SAT NP-completeness.
+  - url: https://en.wikipedia.org/wiki/P_versus_NP_problem
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on P vs NP; widely cited reference covering history and current consensus.
+  - url: https://en.wikipedia.org/wiki/Bayes%27_theorem
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on Bayes' theorem; standard reference for the statement and its applications.
+  - url: https://en.wikipedia.org/wiki/Universal_Turing_machine
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on universal Turing machines; standard definitional source.
+  - url: https://www.cs.virginia.edu/~robins/Turing_Paper_1936.pdf
+    tier: 1
+    credibility: 0.92
+    reasoning: Turing's 1936 paper "On Computable Numbers" — primary publication; PDF transcription hosted at U. Virginia. Citations require open extraction support before they can pass the mechanical wall.
+
+  # --- Physics ---
+  - url: https://www.nobelprize.org/prizes/physics/2022/summary/
+    tier: 1
+    credibility: 0.93
+    reasoning: Official Nobel Prize citation for the 2022 Physics prize on Bell inequality experiments; primary institutional source.
+  - url: https://en.wikipedia.org/wiki/No-communication_theorem
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on the no-communication theorem; standard definitional source for the no-signalling principle.
+  - url: https://en.wikipedia.org/wiki/Landauer%27s_principle
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on Landauer's principle; standard definitional source for the kT ln 2 bound.
+  - url: https://en.wikipedia.org/wiki/Second_law_of_thermodynamics
+    tier: 2
+    credibility: 0.80
+    reasoning: Wikipedia article on the second law; well-edited and cross-referenced bedrock reference.
+  - url: https://en.wikipedia.org/wiki/Galaxy_rotation_curve
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on galaxy rotation curves; standard summary of the observational anomaly.
+  - url: https://en.wikipedia.org/wiki/Bullet_Cluster
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on the Bullet Cluster; standard summary of the gravitational-lensing/X-ray offset.
+  - url: https://en.wikipedia.org/wiki/Quantum_entanglement
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on quantum entanglement; standard reference for the no-FTL-signalling consequence.
+  - url: https://en.wikipedia.org/wiki/Hidden-variable_theory
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on hidden-variable theories; standard reference for Bell-theorem-driven exclusions.
+
+  # --- Neuroscience ---
+  - url: https://en.wikipedia.org/wiki/Neural_correlates_of_consciousness
+    tier: 2
+    credibility: 0.75
+    reasoning: Wikipedia article on neural correlates of consciousness; conventional definitional source.
+  - url: https://en.wikipedia.org/wiki/Lesion
+    tier: 2
+    credibility: 0.72
+    reasoning: Wikipedia article on lesions; thinner than the neuroscience-specific corollaries but useful for definitional anchoring.
+  - url: https://en.wikipedia.org/wiki/General_anaesthesia
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on general anaesthesia; standard definitional reference.
+
+  # --- Biology / Epistemology ---
+  - url: https://en.wikipedia.org/wiki/Natural_selection
+    tier: 2
+    credibility: 0.80
+    reasoning: Wikipedia article on natural selection; well-edited and widely cited.
+  - url: https://en.wikipedia.org/wiki/Replication_crisis
+    tier: 2
+    credibility: 0.78
+    reasoning: Wikipedia article on the replication crisis; standard reference for the OSC 2015 result and aftermath.
+
+  # --- Computer Science / AI ---
+  - url: https://en.wikipedia.org/wiki/Large_language_model
+    tier: 2
+    credibility: 0.75
+    reasoning: Wikipedia article on large language models; conventional definitional source for next-token-prediction training.

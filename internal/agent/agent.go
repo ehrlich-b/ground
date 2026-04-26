@@ -9,11 +9,13 @@ package agent
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 
 	"github.com/ehrlich-b/ground/internal/api"
 	"github.com/ehrlich-b/ground/internal/db"
 	"github.com/ehrlich-b/ground/internal/model"
+	"github.com/ehrlich-b/ground/internal/sources"
 )
 
 // Axiom represents a parsed axiom from FACTS.md.
@@ -34,19 +36,30 @@ type AxiomCitation struct {
 	Reasoning     string
 }
 
+// citationLine matches the FACTS.md citation format:
+//   - `URL` — *"VERBATIM QUOTE"* (polarity)
+//
+// The em-dash and en-dash are both accepted; the polarity in parens is optional
+// (defaults to supports/contradicts based on the section). Lines that don't have
+// both a backticked URL and a quoted span are placeholders ("ingestion target",
+// cross-references) and are skipped silently.
+var citationLine = regexp.MustCompile("`([^`]+)`[^*]*\\*\"([^\"]+)\"\\*(?:\\s*\\(([^)]+)\\))?")
+
 // ParseAxioms parses FACTS.md content into structured axioms.
 //
 // Format expected:
 //
 //	### MATH-01: <title>
 //	**Proposition**: ...
-//	**Basis**: ...
-//	**Anchors**: tag-a, tag-b
-//	**Adjudicated**: TRUE | FALSE
-//	**Citation**: <url> | <verbatim quote>
-//	**Citation**: <url> | <verbatim quote>
+//	**Adjudication**: TRUE | FALSE
+//	**Citations**:
+//	- `URL` — *"VERBATIM QUOTE"* (supports)
+//	- `URL` — *"VERBATIM QUOTE"* (contradicts)
+//	**Topic anchors**: tag-a, tag-b
 //
-// All axioms in `## Adjudicated FALSE` default to Value=0; `Adjudicated:` line can override.
+// All axioms under `## Adjudicated FALSE` default to Value=0. Citations whose
+// polarity is omitted default to supports for TRUE axioms, contradicts for FALSE.
+// Lines without a backticked URL and a quoted span are skipped (placeholders).
 func ParseAxioms(content string) []Axiom {
 	var axioms []Axiom
 	lines := strings.Split(content, "\n")
@@ -80,68 +93,150 @@ func ParseAxioms(content string) []Axiom {
 			current.Proposition = strings.TrimSpace(strings.TrimPrefix(line, "**Proposition**:"))
 		case strings.HasPrefix(line, "**Basis**:"):
 			current.Basis = strings.TrimSpace(strings.TrimPrefix(line, "**Basis**:"))
-		case strings.HasPrefix(line, "**Anchors**:"):
-			body := strings.TrimSpace(strings.TrimPrefix(line, "**Anchors**:"))
+		case strings.HasPrefix(line, "**Topic anchors**:"), strings.HasPrefix(line, "**Anchors**:"):
+			body := strings.TrimPrefix(line, "**Topic anchors**:")
+			body = strings.TrimPrefix(body, "**Anchors**:")
 			for _, a := range strings.Split(body, ",") {
 				a = strings.TrimSpace(a)
 				if a != "" {
 					current.Anchors = append(current.Anchors, a)
 				}
 			}
-		case strings.HasPrefix(line, "**Adjudicated**:"):
-			val := strings.TrimSpace(strings.TrimPrefix(line, "**Adjudicated**:"))
+		case strings.HasPrefix(line, "**Adjudication**:"), strings.HasPrefix(line, "**Adjudicated**:"):
+			val := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "**Adjudication**:"), "**Adjudicated**:"))
 			if strings.EqualFold(val, "FALSE") {
 				current.Value = 0.0
+			} else if strings.EqualFold(val, "TRUE") {
+				current.Value = 1.0
 			}
-		case strings.HasPrefix(line, "**Citation**:"):
-			body := strings.TrimSpace(strings.TrimPrefix(line, "**Citation**:"))
-			parts := strings.SplitN(body, "|", 2)
-			if len(parts) != 2 {
-				continue
+		default:
+			if m := citationLine.FindStringSubmatch(line); m != nil {
+				cit := AxiomCitation{
+					URL:           strings.TrimSpace(m[1]),
+					VerbatimQuote: strings.TrimSpace(m[2]),
+				}
+				polarity := strings.ToLower(strings.TrimSpace(m[3]))
+				switch {
+				case strings.HasPrefix(polarity, "supports"):
+					cit.Polarity = "supports"
+				case strings.HasPrefix(polarity, "contradicts"):
+					cit.Polarity = "contradicts"
+				case strings.HasPrefix(polarity, "qualifies"):
+					cit.Polarity = "qualifies"
+				default:
+					if current.Value == 0.0 {
+						cit.Polarity = "contradicts"
+					} else {
+						cit.Polarity = "supports"
+					}
+				}
+				current.Citations = append(current.Citations, cit)
 			}
-			cit := AxiomCitation{
-				URL:           strings.TrimSpace(parts[0]),
-				VerbatimQuote: strings.TrimSpace(parts[1]),
-				Polarity:      "supports",
-			}
-			if current.Value == 0.0 {
-				cit.Polarity = "contradicts"
-			}
-			current.Citations = append(current.Citations, cit)
 		}
 	}
 	return axioms
 }
 
-// SeedAxioms creates and adjudicates each axiom as a claim. Citations on each axiom
-// are persisted via Phase 3 once the citation pipeline is wired into the seed flow;
-// for now this seeds the bare claims so the rest of the system can operate.
-func SeedAxioms(store *db.Store, axioms []Axiom) error {
+// SeedAxioms creates and adjudicates each axiom as a claim, then ingests every
+// declared citation source and persists a citation row for each verbatim quote
+// that survives the mechanical containment check. Citations whose source fails
+// to fetch or whose quote is not contained in the cached body are logged and
+// skipped — the bare adjudicated claim still lands so downstream queries work,
+// but the operator should treat any unsupported axiom as a TODO.
+//
+// Pass a nil ingester to seed bare claims only (used in tests where network
+// fetching isn't available).
+func SeedAxioms(store *db.Store, ing *sources.Ingester, axioms []Axiom) error {
+	if _, err := EnsureAdminAgent(store); err != nil {
+		return fmt.Errorf("ensure admin agent: %w", err)
+	}
 	for _, ax := range axioms {
 		id := fmt.Sprintf("axiom-%s", strings.ToLower(ax.Code))
+		existed := false
 		if _, err := store.GetClaim(id); err == nil {
-			log.Printf("  axiom %s already exists, skipping", ax.Code)
-			continue
-		}
-		claim := &model.Claim{
-			ID:          id,
-			Proposition: ax.Proposition,
-			Status:      "active",
-		}
-		if err := store.CreateClaim(claim); err != nil {
-			return fmt.Errorf("create axiom %s: %w", ax.Code, err)
-		}
-		reasoning := fmt.Sprintf("Axiomatic node. %s", ax.Basis)
-		if err := store.AdjudicateClaim(id, ax.Value, "seed", reasoning); err != nil {
-			return fmt.Errorf("adjudicate axiom %s: %w", ax.Code, err)
+			existed = true
+		} else {
+			claim := &model.Claim{
+				ID:          id,
+				Proposition: ax.Proposition,
+				Status:      "active",
+			}
+			if err := store.CreateClaim(claim); err != nil {
+				return fmt.Errorf("create axiom %s: %w", ax.Code, err)
+			}
+			reasoning := fmt.Sprintf("Axiomatic node. %s", ax.Basis)
+			if err := store.AdjudicateClaim(id, ax.Value, "seed", reasoning); err != nil {
+				return fmt.Errorf("adjudicate axiom %s: %w", ax.Code, err)
+			}
 		}
 		status := "TRUE"
 		if ax.Value == 0.0 {
 			status = "FALSE"
 		}
-		log.Printf("  %s [%s]: %s", ax.Code, status, truncate(ax.Proposition, 70))
+		verb := "seeded"
+		if existed {
+			verb = "exists"
+		}
+		log.Printf("  %s [%s] (%s): %s", ax.Code, status, verb, truncate(ax.Proposition, 70))
+
+		if ing == nil {
+			continue
+		}
+		seedAxiomCitations(store, ing, id, ax)
 	}
 	return nil
+}
+
+// seedAxiomCitations ingests each declared citation source and persists a
+// citation row for each verbatim quote that passes the mechanical check.
+// Failures are logged and the loop continues; one bad citation must not block
+// the rest of the axiom.
+func seedAxiomCitations(store *db.Store, ing *sources.Ingester, claimID string, ax Axiom) {
+	for _, ac := range ax.Citations {
+		res, err := ing.Ingest(ac.URL)
+		if err != nil {
+			log.Printf("    skip citation %s: ingest failed: %v", ac.URL, err)
+			continue
+		}
+		if !db.HasSourceQuote(string(res.Body), ac.VerbatimQuote) {
+			log.Printf("    skip citation %s: quote not in cached body", ac.URL)
+			continue
+		}
+		existing, _ := store.ListCitationsByClaim(claimID)
+		dup := false
+		for _, c := range existing {
+			if c.SourceID == res.Source.ID && c.VerbatimQuote == ac.VerbatimQuote {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			continue
+		}
+		reason := nullable(ac.Reasoning)
+		cit := &model.Citation{
+			ID:            db.GenerateID(),
+			ClaimID:       claimID,
+			SourceID:      res.Source.ID,
+			VerbatimQuote: ac.VerbatimQuote,
+			Polarity:      ac.Polarity,
+			Reasoning:     reason,
+			ExtractorID:   "admin",
+			AuditFactor:   1.0,
+			Status:        "active",
+		}
+		if err := store.CreateCitation(cit); err != nil {
+			log.Printf("    skip citation %s: create failed: %v", ac.URL, err)
+			continue
+		}
+	}
+}
+
+func nullable(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // EnsureAdminAgent creates the admin agent (idempotent) and returns it.

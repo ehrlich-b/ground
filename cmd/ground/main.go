@@ -536,7 +536,11 @@ func bootstrapAxiomsCmd() *cobra.Command {
 				return fmt.Errorf("read axioms file: %w", err)
 			}
 			axioms := agent.ParseAxioms(string(data))
-			return agent.SeedAxioms(store, axioms)
+			ing, err := newIngester(store)
+			if err != nil {
+				return err
+			}
+			return agent.SeedAxioms(store, ing, axioms)
 		},
 	}
 	cmd.Flags().String("db", "ground.db", "Database path")
