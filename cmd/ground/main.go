@@ -16,8 +16,10 @@ import (
 	"github.com/ehrlich-b/ground/internal/embed"
 	"github.com/ehrlich-b/ground/internal/engine"
 	"github.com/ehrlich-b/ground/internal/model"
+	"github.com/ehrlich-b/ground/internal/sources"
 	"github.com/ehrlich-b/ground/internal/web"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var version = "dev"
@@ -25,28 +27,31 @@ var version = "dev"
 func main() {
 	root := &cobra.Command{
 		Use:     "ground",
-		Short:   "An epistemic engine",
+		Short:   "A source-anchored encyclopedia of weighted facts",
 		Version: version,
 	}
 
-	// Server commands
+	// Server
 	root.AddCommand(serveCmd())
-	root.AddCommand(seedCmd())
 	root.AddCommand(computeCmd())
 	root.AddCommand(addTopicCmd())
 	root.AddCommand(tokenCmd())
 	root.AddCommand(adjudicateCmd())
-	root.AddCommand(cascadeCmd())
 	root.AddCommand(statusCmd())
+	root.AddCommand(anchorCmd())
+	root.AddCommand(sourceCmd())
+	root.AddCommand(bootstrapAnchorsCmd())
+	root.AddCommand(bootstrapAxiomsCmd())
 
-	// Client commands
+	// Client
 	root.AddCommand(loginCmd())
 	root.AddCommand(whoamiCmd())
 	root.AddCommand(exploreCmd())
 	root.AddCommand(claimCmd())
-	root.AddCommand(assertCmd())
-	root.AddCommand(reviewCmd())
+	root.AddCommand(citeCmd())
+	root.AddCommand(auditCmd())
 	root.AddCommand(dependCmd())
+	root.AddCommand(lensCmd())
 	root.AddCommand(leaderboardCmd())
 	root.AddCommand(contestedCmd())
 	root.AddCommand(frontierCmd())
@@ -58,7 +63,7 @@ func main() {
 	}
 }
 
-// --- Server Commands ---
+// --- Server commands ---
 
 func serveCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -96,48 +101,10 @@ func serveCmd() *cobra.Command {
 	return cmd
 }
 
-func seedCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "seed",
-		Short: "Seed axioms, register agents, generate claims, compute epoch",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			dbPath, _ := cmd.Flags().GetString("db")
-			serverURL, _ := cmd.Flags().GetString("server")
-			groundBin, _ := cmd.Flags().GetString("ground-bin")
-			concurrency, _ := cmd.Flags().GetInt("concurrency")
-			skipAgents, _ := cmd.Flags().GetBool("skip-agents")
-
-			secret := os.Getenv("GROUND_JWT_SECRET")
-			if secret == "" {
-				return fmt.Errorf("GROUND_JWT_SECRET environment variable is required")
-			}
-
-			model, _ := cmd.Flags().GetString("model")
-
-			return agent.RunSeed(agent.SeedConfig{
-				DBPath:      dbPath,
-				JWTSecret:   []byte(secret),
-				ServerURL:   serverURL,
-				GroundBin:   groundBin,
-				Model:       model,
-				Concurrency: concurrency,
-				SkipAgents:  skipAgents,
-			})
-		},
-	}
-	cmd.Flags().String("db", "ground.db", "Database path")
-	cmd.Flags().String("server", "http://localhost:8080", "Ground server URL")
-	cmd.Flags().String("ground-bin", "ground", "Path to ground binary")
-	cmd.Flags().String("model", "sonnet", "Claude model for agents (sonnet, opus, haiku)")
-	cmd.Flags().Int("concurrency", 5, "Max parallel agent processes")
-	cmd.Flags().Bool("skip-agents", false, "Skip agent rounds (axioms + compute only)")
-	return cmd
-}
-
 func computeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "compute",
-		Short: "Run one dual EigenTrust epoch",
+		Short: "Run one epoch: source credibility, agent reliability, claim groundedness",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dbPath, _ := cmd.Flags().GetString("db")
 			store, err := openDB(dbPath)
@@ -145,16 +112,13 @@ func computeCmd() *cobra.Command {
 				return err
 			}
 			defer store.Close()
-
-			cfg := engine.DefaultConfig()
-			result, err := engine.RunEpoch(store, cfg)
+			result, err := engine.RunEpoch(store, engine.DefaultConfig())
 			if err != nil {
 				return fmt.Errorf("compute: %w", err)
 			}
-
 			fmt.Printf("epoch %d complete\n", result.EpochID)
-			fmt.Printf("  accuracy:     %d iterations, delta=%.6f\n", result.AccuracyIterations, result.AccuracyDelta)
-			fmt.Printf("  contribution: %d iterations, delta=%.6f\n", result.ContributionIterations, result.ContributionDelta)
+			fmt.Printf("  source credibility:  %d iterations, delta=%.6f\n", result.SourceIterations, result.SourceDelta)
+			fmt.Printf("  agent reliability:   %d iterations, delta=%.6f\n", result.AgentIterations, result.AgentDelta)
 			return nil
 		},
 	}
@@ -165,7 +129,7 @@ func computeCmd() *cobra.Command {
 func addTopicCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-topic",
-		Short: "Add a topic for agents to evaluate",
+		Short: "Add a topic",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dbPath, _ := cmd.Flags().GetString("db")
 			title, _ := cmd.Flags().GetString("title")
@@ -173,27 +137,23 @@ func addTopicCmd() *cobra.Command {
 			if title == "" {
 				return fmt.Errorf("--title is required")
 			}
-
 			store, err := openDB(dbPath)
 			if err != nil {
 				return err
 			}
 			defer store.Close()
-
 			embedder, err := embed.NewOpenAI()
 			if err != nil {
 				return fmt.Errorf("init embedder: %w", err)
 			}
-
 			vec, err := embedder.Embed(title + ": " + description)
 			if err != nil {
 				return fmt.Errorf("embed: %w", err)
 			}
-
 			slug := slugify(title)
 			desc := description
 			topic := &model.Topic{
-				ID:          fmt.Sprintf("%d", time.Now().UnixNano()),
+				ID:          db.GenerateID(),
 				Title:       title,
 				Slug:        slug,
 				Description: &desc,
@@ -202,7 +162,6 @@ func addTopicCmd() *cobra.Command {
 			if err := store.CreateTopic(topic); err != nil {
 				return fmt.Errorf("create topic: %w", err)
 			}
-
 			fmt.Printf("created topic: %s (slug: %s)\n", title, slug)
 			return nil
 		},
@@ -216,13 +175,44 @@ func addTopicCmd() *cobra.Command {
 func tokenCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "token",
-		Short: "Issue JWT",
+		Short: "Issue JWT for an agent (admin only)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runToken(cmd)
+			dbPath, _ := cmd.Flags().GetString("db")
+			isAdmin, _ := cmd.Flags().GetBool("admin")
+			agentID, _ := cmd.Flags().GetString("agent-id")
+			secret := os.Getenv("GROUND_JWT_SECRET")
+			if secret == "" {
+				return fmt.Errorf("GROUND_JWT_SECRET environment variable is required")
+			}
+			store, err := openDB(dbPath)
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+
+			role := "agent"
+			if isAdmin {
+				role = "admin"
+				if agentID == "" {
+					if _, err := agent.EnsureAdminAgent(store); err != nil {
+						return err
+					}
+					agentID = "admin"
+				}
+			}
+			if agentID == "" {
+				return fmt.Errorf("--agent-id is required (or use --admin)")
+			}
+			tok, err := api.IssueToken(store, []byte(secret), agentID, role)
+			if err != nil {
+				return fmt.Errorf("issue token: %w", err)
+			}
+			fmt.Println(tok)
+			return nil
 		},
 	}
 	cmd.Flags().Bool("admin", false, "Issue admin token")
-	cmd.Flags().String("agent-id", "", "Issue token for agent")
+	cmd.Flags().String("agent-id", "", "Agent to issue token for")
 	cmd.Flags().String("db", "ground.db", "Database path")
 	return cmd
 }
@@ -230,7 +220,7 @@ func tokenCmd() *cobra.Command {
 func adjudicateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "adjudicate",
-		Short: "Rule on a claim — lock it as settled truth or falsehood",
+		Short: "Pin a claim as adjudicated true/false (requires ≥1 citation)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dbPath, _ := cmd.Flags().GetString("db")
 			claimID, _ := cmd.Flags().GetString("claim-id")
@@ -239,32 +229,33 @@ func adjudicateCmd() *cobra.Command {
 			if claimID == "" {
 				return fmt.Errorf("--claim-id is required")
 			}
-
 			store, err := openDB(dbPath)
 			if err != nil {
 				return err
 			}
 			defer store.Close()
-
+			citations, _ := store.ListCitationsByClaim(claimID)
+			if len(citations) == 0 {
+				return fmt.Errorf("cannot adjudicate %s: no citations attached", claimID)
+			}
 			if err := store.AdjudicateClaim(claimID, value, "admin", reasoning); err != nil {
 				return fmt.Errorf("adjudicate: %w", err)
 			}
-
 			fmt.Printf("adjudicated claim %s = %.1f\n", claimID, value)
 			return nil
 		},
 	}
 	cmd.Flags().String("db", "ground.db", "Database path")
-	cmd.Flags().String("claim-id", "", "Claim to adjudicate")
-	cmd.Flags().Float64("value", 1.0, "Adjudicated value (1.0 = true, 0.0 = false)")
+	cmd.Flags().String("claim-id", "", "Claim id")
+	cmd.Flags().Float64("value", 1.0, "Adjudicated value (1.0 true, 0.0 false)")
 	cmd.Flags().String("reasoning", "", "Why this is being adjudicated")
 	return cmd
 }
 
-func cascadeCmd() *cobra.Command {
+func statusCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "cascade",
-		Short: "Run cascade analysis on dependency-threatened claims",
+		Use:   "status",
+		Short: "Show stats summary",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dbPath, _ := cmd.Flags().GetString("db")
 			store, err := openDB(dbPath)
@@ -272,44 +263,31 @@ func cascadeCmd() *cobra.Command {
 				return err
 			}
 			defer store.Close()
-
-			claims, err := store.ListAllClaims()
-			if err != nil {
-				return err
-			}
-
-			found := 0
-			for _, c := range claims {
-				if c.Status == "adjudicated" {
-					continue
-				}
-				deps, _ := store.ListDependenciesByClaim(c.ID)
-				for _, d := range deps {
-					dep, err := store.GetClaim(d.DependsOnID)
-					if err != nil {
-						continue
-					}
-					if dep.EffectiveGroundedness < 0.5 && d.Strength > 0.5 {
-						prop := c.Proposition
-						if len(prop) > 60 {
-							prop = prop[:57] + "..."
-						}
-						depProp := dep.Proposition
-						if len(depProp) > 40 {
-							depProp = depProp[:37] + "..."
-						}
-						fmt.Printf("THREATENED: %s\n", prop)
-						fmt.Printf("  depends on [%.2f groundedness]: %s\n", dep.EffectiveGroundedness, depProp)
-						fmt.Printf("  strength: %.2f\n\n", d.Strength)
-						found++
-					}
+			agents, _ := store.CountAgents()
+			topics, _ := store.CountTopics()
+			claims, _ := store.CountClaims()
+			srcs, _ := store.CountSources()
+			cits, _ := store.CountCitations()
+			epochs, _ := store.CountEpochs()
+			fmt.Printf("agents:     %d\n", agents)
+			fmt.Printf("topics:     %d\n", topics)
+			fmt.Printf("sources:    %d\n", srcs)
+			fmt.Printf("claims:     %d\n", claims)
+			fmt.Printf("citations:  %d\n", cits)
+			fmt.Printf("epochs:     %d\n", epochs)
+			counts, _ := store.CountClaimsByStatus()
+			if len(counts) > 0 {
+				fmt.Println("\nclaims by status:")
+				for s, c := range counts {
+					fmt.Printf("  %-14s %d\n", s, c)
 				}
 			}
-
-			if found == 0 {
-				fmt.Println("no dependency-threatened claims found")
-			} else {
-				fmt.Printf("%d threatened dependencies found\n", found)
+			top, _ := store.TopAgentsByReliability(5)
+			if len(top) > 0 {
+				fmt.Println("\ntop agents by reliability:")
+				for _, a := range top {
+					fmt.Printf("  %-24s reliability=%.3f productivity=%.3f role=%s\n", a.Name, a.Reliability, a.Productivity, a.Role)
+				}
 			}
 			return nil
 		},
@@ -318,140 +296,294 @@ func cascadeCmd() *cobra.Command {
 	return cmd
 }
 
-func statusCmd() *cobra.Command {
+// --- Anchor / source admin ---
+
+func anchorCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show current stats",
+		Use:   "anchor",
+		Short: "Manage admin-curated source anchors",
+	}
+	cmd.AddCommand(anchorAddCmd())
+	cmd.AddCommand(anchorListCmd())
+	cmd.AddCommand(anchorRemoveCmd())
+	return cmd
+}
+
+func anchorAddCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "add [url]",
+		Short: "Anchor a source",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(cmd)
+			dbPath, _ := cmd.Flags().GetString("db")
+			tier, _ := cmd.Flags().GetInt("tier")
+			cred, _ := cmd.Flags().GetFloat64("credibility")
+			reasoning, _ := cmd.Flags().GetString("reasoning")
+			store, err := openDB(dbPath)
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			ing, err := newIngester(store)
+			if err != nil {
+				return err
+			}
+			res, err := ing.Ingest(args[0])
+			if err != nil {
+				return fmt.Errorf("ingest: %w", err)
+			}
+			anchor := &model.SourceAnchor{
+				SourceID:    res.Source.ID,
+				Tier:        tier,
+				Credibility: cred,
+				SetBy:       "admin",
+				Reasoning:   nullable(reasoning),
+			}
+			if err := store.UpsertSourceAnchor(anchor); err != nil {
+				return fmt.Errorf("anchor: %w", err)
+			}
+			fmt.Printf("anchored %s (tier=%d cred=%.2f)\n", args[0], tier, cred)
+			return nil
+		},
+	}
+	cmd.Flags().String("db", "ground.db", "Database path")
+	cmd.Flags().Int("tier", 2, "Anchor tier (1-4)")
+	cmd.Flags().Float64("credibility", 0.7, "Initial credibility prior")
+	cmd.Flags().String("reasoning", "", "Why this is anchored")
+	return cmd
+}
+
+func anchorListCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List anchored sources",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dbPath, _ := cmd.Flags().GetString("db")
+			store, err := openDB(dbPath)
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			anchors, err := store.ListSourceAnchors()
+			if err != nil {
+				return err
+			}
+			for _, a := range anchors {
+				src, _ := store.GetSource(a.SourceID)
+				url := a.SourceID
+				if src != nil {
+					url = src.URL
+				}
+				fmt.Printf("[tier %d, cred %.2f] %s\n", a.Tier, a.Credibility, url)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().String("db", "ground.db", "Database path")
 	return cmd
 }
 
-func runStatus(cmd *cobra.Command) error {
-	dbPath, _ := cmd.Flags().GetString("db")
-
-	store, err := openDB(dbPath)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-
-	agents, err := store.CountAgents()
-	if err != nil {
-		return fmt.Errorf("count agents: %w", err)
-	}
-
-	claims, err := store.CountClaims()
-	if err != nil {
-		return fmt.Errorf("count claims: %w", err)
-	}
-
-	topics, err := store.CountTopics()
-	if err != nil {
-		return fmt.Errorf("count topics: %w", err)
-	}
-
-	epochs, err := store.CountEpochs()
-	if err != nil {
-		return fmt.Errorf("count epochs: %w", err)
-	}
-
-	fmt.Printf("agents:  %d\n", agents)
-	fmt.Printf("topics:  %d\n", topics)
-	fmt.Printf("claims:  %d\n", claims)
-	fmt.Printf("epochs:  %d\n", epochs)
-
-	statusCounts, err := store.CountClaimsByStatus()
-	if err != nil {
-		return fmt.Errorf("count by status: %w", err)
-	}
-	if len(statusCounts) > 0 {
-		fmt.Println("\nclaims by status:")
-		for s, c := range statusCounts {
-			fmt.Printf("  %-14s %d\n", s, c)
-		}
-	}
-
-	topAgents, err := store.TopAgentsByWeight(5)
-	if err == nil && len(topAgents) > 0 {
-		fmt.Println("\ntop agents:")
-		for _, a := range topAgents {
-			fmt.Printf("  %-24s weight=%.3f acc=%.3f cont=%.3f\n", a.Name, a.Weight, a.Accuracy, a.Contribution)
-		}
-	}
-
-	contested, err := store.MostContestedClaims(3)
-	if err == nil && len(contested) > 0 {
-		fmt.Println("\nmost contested:")
-		for _, c := range contested {
-			prop := c.Proposition
-			if len(prop) > 80 {
-				prop = prop[:77] + "..."
+func anchorRemoveCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "remove [source-id]",
+		Short: "Remove an anchor",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dbPath, _ := cmd.Flags().GetString("db")
+			store, err := openDB(dbPath)
+			if err != nil {
+				return err
 			}
-			fmt.Printf("  [%.2f] %s\n", c.Contestation, prop)
-		}
+			defer store.Close()
+			return store.DeleteSourceAnchor(args[0])
+		},
 	}
-
-	return nil
+	cmd.Flags().String("db", "ground.db", "Database path")
+	return cmd
 }
 
-// --- Client Commands ---
+func sourceCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "source",
+		Short: "Manage sources",
+	}
+	cmd.AddCommand(sourceIngestCmd())
+	cmd.AddCommand(sourceTagCmd())
+	return cmd
+}
+
+func sourceIngestCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "ingest [url]",
+		Short: "Fetch and store a source",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dbPath, _ := cmd.Flags().GetString("db")
+			store, err := openDB(dbPath)
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			ing, err := newIngester(store)
+			if err != nil {
+				return err
+			}
+			res, err := ing.Ingest(args[0])
+			if err != nil {
+				return fmt.Errorf("ingest: %w", err)
+			}
+			fmt.Printf("source %s (%s, reused=%v)\n", res.Source.ID, res.Source.Type, res.Reused)
+			return nil
+		},
+	}
+	cmd.Flags().String("db", "ground.db", "Database path")
+	return cmd
+}
+
+func sourceTagCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "tag [source-id] [tag]",
+		Short: "Tag a source",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dbPath, _ := cmd.Flags().GetString("db")
+			store, err := openDB(dbPath)
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			return store.AddSourceTag(args[0], args[1])
+		},
+	}
+	cmd.Flags().String("db", "ground.db", "Database path")
+	return cmd
+}
+
+func bootstrapAnchorsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "bootstrap-anchors [path]",
+		Short: "Load anchors from anchors.yaml",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dbPath, _ := cmd.Flags().GetString("db")
+			data, err := os.ReadFile(args[0])
+			if err != nil {
+				return fmt.Errorf("read anchors file: %w", err)
+			}
+			var doc struct {
+				Anchors []struct {
+					URL         string  `yaml:"url"`
+					Tier        int     `yaml:"tier"`
+					Credibility float64 `yaml:"credibility"`
+					Reasoning   string  `yaml:"reasoning"`
+				} `yaml:"anchors"`
+			}
+			if err := yaml.Unmarshal(data, &doc); err != nil {
+				return fmt.Errorf("parse anchors yaml: %w", err)
+			}
+			store, err := openDB(dbPath)
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			ing, err := newIngester(store)
+			if err != nil {
+				return err
+			}
+			for _, a := range doc.Anchors {
+				res, err := ing.Ingest(a.URL)
+				if err != nil {
+					log.Printf("ingest %s: %v", a.URL, err)
+					continue
+				}
+				if err := store.UpsertSourceAnchor(&model.SourceAnchor{
+					SourceID:    res.Source.ID,
+					Tier:        a.Tier,
+					Credibility: a.Credibility,
+					SetBy:       "admin",
+					Reasoning:   nullable(a.Reasoning),
+				}); err != nil {
+					log.Printf("anchor %s: %v", a.URL, err)
+				}
+			}
+			fmt.Printf("loaded %d anchors\n", len(doc.Anchors))
+			return nil
+		},
+	}
+	cmd.Flags().String("db", "ground.db", "Database path")
+	return cmd
+}
+
+func bootstrapAxiomsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "bootstrap-axioms [path]",
+		Short: "Load FACTS.md axioms as adjudicated claims",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dbPath, _ := cmd.Flags().GetString("db")
+			store, err := openDB(dbPath)
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			data, err := os.ReadFile(args[0])
+			if err != nil {
+				return fmt.Errorf("read axioms file: %w", err)
+			}
+			axioms := agent.ParseAxioms(string(data))
+			return agent.SeedAxioms(store, axioms)
+		},
+	}
+	cmd.Flags().String("db", "ground.db", "Database path")
+	return cmd
+}
+
+// --- Client commands ---
 
 func loginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login [url]",
-		Short: "Authenticate against a remote Ground instance",
+		Short: "Authenticate against a Ground instance (registers a new agent)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			url := args[0]
 			name, _ := cmd.Flags().GetString("name")
+			role, _ := cmd.Flags().GetString("role")
 			if name == "" {
 				return fmt.Errorf("--name is required for registration")
 			}
-
 			c := client.NewWithConfig(url, "")
-			result, err := c.Register(name)
+			result, err := c.Register(name, role)
 			if err != nil {
 				return fmt.Errorf("register: %w", err)
 			}
-
 			data, _ := result["data"].(map[string]any)
 			token, _ := data["token"].(string)
-			agent, _ := data["agent"].(map[string]any)
-			agentID, _ := agent["id"].(string)
-
+			a, _ := data["agent"].(map[string]any)
+			id, _ := a["id"].(string)
 			if err := client.SaveConfig(&client.Config{URL: url, Token: token}); err != nil {
 				return fmt.Errorf("save config: %w", err)
 			}
-
-			fmt.Printf("logged in as %s (id: %s)\n", name, agentID)
-			fmt.Printf("config saved to ~/.ground/config.json\n")
+			fmt.Printf("logged in as %s (id: %s, role: %s)\n", name, id, role)
 			return nil
 		},
 	}
-	cmd.Flags().String("name", "", "Agent name for registration")
+	cmd.Flags().String("name", "", "Agent name")
+	cmd.Flags().String("role", "both", "Agent role (extractor, auditor, both, observer)")
 	return cmd
 }
 
 func whoamiCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "whoami",
-		Short: "Show your agent profile and scores",
+		Short: "Show your config + recent activity",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client.New()
+			cfg, err := client.LoadConfig()
 			if err != nil {
 				return err
 			}
-			// Parse the agent ID from the saved token
-			cfg, _ := client.LoadConfig()
-			_ = cfg
-			// For now, just show config info
 			fmt.Printf("url:   %s\n", cfg.URL)
 			fmt.Printf("token: %s...%s\n", cfg.Token[:8], cfg.Token[len(cfg.Token)-8:])
-			_ = c
 			return nil
 		},
 	}
@@ -460,30 +592,18 @@ func whoamiCmd() *cobra.Command {
 func exploreCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "explore",
-		Short: "Browse topics, contested claims, frontier",
+		Short: "Browse contested + frontier claims",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New()
 			if err != nil {
 				return err
 			}
-
-			fmt.Println("=== Topics ===")
-			topics, err := c.ListTopics()
-			if err == nil {
-				printJSON(topics)
-			}
-
-			fmt.Println("\n=== Most Contested ===")
-			contested, err := c.Contested(5)
-			if err == nil {
-				printJSON(contested)
-			}
-
+			fmt.Println("=== Most Contested ===")
+			contested, _ := c.Contested(5)
+			printJSON(contested)
 			fmt.Println("\n=== Frontier ===")
-			frontier, err := c.Frontier(5)
-			if err == nil {
-				printJSON(frontier)
-			}
+			frontier, _ := c.Frontier(5)
+			printJSON(frontier)
 			return nil
 		},
 	}
@@ -492,29 +612,31 @@ func exploreCmd() *cobra.Command {
 func claimCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "claim [proposition]",
-		Short: "Create a new claim",
+		Short: "Create a new claim with at least one citation",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New()
 			if err != nil {
 				return err
 			}
-
-			topic, _ := cmd.Flags().GetString("topic")
-			confidence, _ := cmd.Flags().GetFloat64("confidence")
+			source, _ := cmd.Flags().GetString("source")
+			quote, _ := cmd.Flags().GetString("quote")
+			polarity, _ := cmd.Flags().GetString("polarity")
 			reasoning, _ := cmd.Flags().GetString("reasoning")
-			sources, _ := cmd.Flags().GetStringSlice("source")
-
+			if source == "" || quote == "" {
+				return fmt.Errorf("--source and --quote are required (one citation minimum)")
+			}
 			req := map[string]any{
 				"proposition": args[0],
-				"topic_slug":  topic,
-				"confidence":  confidence,
-				"reasoning":   reasoning,
+				"citations": []map[string]any{
+					{
+						"url":            source,
+						"verbatim_quote": quote,
+						"polarity":       polarity,
+						"reasoning":      reasoning,
+					},
+				},
 			}
-			if len(sources) > 0 {
-				req["sources"] = strings.Join(sources, "\n")
-			}
-
 			result, err := c.CreateClaim(req)
 			if err != nil {
 				return fmt.Errorf("create claim: %w", err)
@@ -523,135 +645,160 @@ func claimCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().String("topic", "", "Topic slug")
-	cmd.Flags().Float64("confidence", 0.7, "Confidence level (0-1)")
-	cmd.Flags().String("reasoning", "", "Why you believe this")
-	cmd.Flags().StringSlice("source", nil, "Source URLs (repeatable)")
+	cmd.Flags().String("source", "", "Source URL or id for the required citation")
+	cmd.Flags().String("quote", "", "Verbatim quote substring of the source body")
+	cmd.Flags().String("polarity", "supports", "supports | contradicts | qualifies")
+	cmd.Flags().String("reasoning", "", "Why this quote backs the claim")
 	return cmd
 }
 
-func assertCmd() *cobra.Command {
+func citeCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "assert [claim-id]",
-		Short: "Support, contest, or refine a claim",
+		Use:   "cite [claim-id]",
+		Short: "Propose a citation",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New()
 			if err != nil {
 				return err
 			}
-
-			stance, _ := cmd.Flags().GetString("stance")
-			confidence, _ := cmd.Flags().GetFloat64("confidence")
+			source, _ := cmd.Flags().GetString("source")
+			quote, _ := cmd.Flags().GetString("quote")
+			polarity, _ := cmd.Flags().GetString("polarity")
 			reasoning, _ := cmd.Flags().GetString("reasoning")
-			refinedProp, _ := cmd.Flags().GetString("refined-proposition")
-
 			req := map[string]any{
-				"claim_id":   args[0],
-				"stance":     stance,
-				"confidence": confidence,
-				"reasoning":  reasoning,
+				"claim_id":       args[0],
+				"verbatim_quote": quote,
+				"polarity":       polarity,
+				"reasoning":      reasoning,
 			}
-			if refinedProp != "" {
-				req["refined_proposition"] = refinedProp
+			if strings.HasPrefix(source, "http") {
+				req["url"] = source
+			} else {
+				req["source_id"] = source
 			}
-
-			result, err := c.CreateAssertion(req)
+			result, err := c.CreateCitation(req)
 			if err != nil {
-				return fmt.Errorf("create assertion: %w", err)
+				return fmt.Errorf("create citation: %w", err)
 			}
 			printJSON(result)
 			return nil
 		},
 	}
-	cmd.Flags().String("stance", "support", "Stance: support, contest, or refine")
-	cmd.Flags().Float64("confidence", 0.7, "Confidence level (0-1)")
-	cmd.Flags().String("reasoning", "", "Why you hold this stance")
-	cmd.Flags().StringSlice("source", nil, "Source URLs (repeatable)")
-	cmd.Flags().String("refined-proposition", "", "Better formulation (required if --stance=refine)")
+	cmd.Flags().String("source", "", "Source URL or id")
+	cmd.Flags().String("quote", "", "Verbatim quote (must literally appear in the source body)")
+	cmd.Flags().String("polarity", "supports", "supports | contradicts | qualifies")
+	cmd.Flags().String("reasoning", "", "Why this quote backs the claim")
 	return cmd
 }
 
-func reviewCmd() *cobra.Command {
+func auditCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "review [assertion-id]",
-		Short: "Rate an assertion's helpfulness",
+		Use:   "audit [citation-id]",
+		Short: "Verify someone else's citation",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New()
 			if err != nil {
 				return err
 			}
-
-			helpfulness, _ := cmd.Flags().GetFloat64("helpfulness")
+			semantic, _ := cmd.Flags().GetString("semantic")
 			reasoning, _ := cmd.Flags().GetString("reasoning")
-
-			result, err := c.CreateReview(map[string]any{
-				"assertion_id": args[0],
-				"helpfulness":  helpfulness,
-				"reasoning":    reasoning,
+			result, err := c.CreateAudit(map[string]any{
+				"citation_id": args[0],
+				"semantic":    semantic,
+				"reasoning":   reasoning,
 			})
 			if err != nil {
-				return fmt.Errorf("create review: %w", err)
+				return fmt.Errorf("create audit: %w", err)
 			}
 			printJSON(result)
 			return nil
 		},
 	}
-	cmd.Flags().Float64("helpfulness", 0.5, "Helpfulness rating (0-1)")
-	cmd.Flags().String("reasoning", "", "Why this was or wasn't helpful")
+	cmd.Flags().String("semantic", "confirm", "confirm | misquote | out_of_context | weak | broken_link")
+	cmd.Flags().String("reasoning", "", "Why this verdict")
 	return cmd
 }
 
 func dependCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "depend [claim-id] [depends-on-id]",
-		Short: "Declare a dependency between claims",
+		Short: "Declare a dependency",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New()
 			if err != nil {
 				return err
 			}
-
 			strength, _ := cmd.Flags().GetFloat64("strength")
 			reasoning, _ := cmd.Flags().GetString("reasoning")
-
 			result, err := c.CreateDependency(map[string]any{
-				"claim_id":     args[0],
+				"claim_id":      args[0],
 				"depends_on_id": args[1],
-				"strength":     strength,
-				"reasoning":    reasoning,
+				"strength":      strength,
+				"reasoning":     reasoning,
 			})
 			if err != nil {
-				return fmt.Errorf("create dependency: %w", err)
+				return fmt.Errorf("depend: %w", err)
 			}
 			printJSON(result)
 			return nil
 		},
 	}
-	cmd.Flags().Float64("strength", 1.0, "How load-bearing (0-1)")
-	cmd.Flags().String("reasoning", "", "Why this dependency exists")
+	cmd.Flags().Float64("strength", 1.0, "Dependency strength (0-1)")
+	cmd.Flags().String("reasoning", "", "Why this dependency")
 	return cmd
 }
 
-func leaderboardCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "leaderboard",
-		Short: "Agent rankings by weight",
+func lensCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "lens",
+		Short: "Manage lenses",
+	}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "new",
+		Short: "Create a new lens",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New()
 			if err != nil {
 				return err
 			}
-			result, err := c.Leaderboard(25)
+			slug, _ := cmd.Flags().GetString("slug")
+			desc, _ := cmd.Flags().GetString("description")
+			result, err := c.CreateLens(map[string]any{"slug": slug, "description": desc, "public": true})
 			if err != nil {
-				return fmt.Errorf("leaderboard: %w", err)
+				return err
+			}
+			printJSON(result)
+			return nil
+		},
+	})
+	cmd.Flags().String("slug", "", "Lens slug")
+	cmd.Flags().String("description", "", "Lens description")
+	return cmd
+}
+
+func leaderboardCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "leaderboard",
+		Short: "Source credibility ranking (lens-aware)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client.New()
+			if err != nil {
+				return err
+			}
+			lensSlug, _ := cmd.Flags().GetString("lens")
+			result, err := c.SourceLeaderboard(25, lensSlug)
+			if err != nil {
+				return err
 			}
 			printJSON(result)
 			return nil
 		},
 	}
+	cmd.Flags().String("lens", "", "Apply a lens slug")
+	return cmd
 }
 
 func contestedCmd() *cobra.Command {
@@ -665,7 +812,7 @@ func contestedCmd() *cobra.Command {
 			}
 			result, err := c.Contested(25)
 			if err != nil {
-				return fmt.Errorf("contested: %w", err)
+				return err
 			}
 			printJSON(result)
 			return nil
@@ -676,7 +823,7 @@ func contestedCmd() *cobra.Command {
 func frontierCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "frontier",
-		Short: "Knowledge frontiers worth exploring",
+		Short: "High-fan-out, high-contestation claims",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New()
 			if err != nil {
@@ -684,7 +831,7 @@ func frontierCmd() *cobra.Command {
 			}
 			result, err := c.Frontier(25)
 			if err != nil {
-				return fmt.Errorf("frontier: %w", err)
+				return err
 			}
 			printJSON(result)
 			return nil
@@ -695,14 +842,13 @@ func frontierCmd() *cobra.Command {
 func showCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show [id]",
-		Short: "Detail view for any claim or agent",
+		Short: "Show a claim or agent by id",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New()
 			if err != nil {
 				return err
 			}
-			// Try claim first, then agent
 			result, err := c.GetClaim(args[0])
 			if err != nil {
 				result, err = c.GetAgent(args[0])
@@ -716,54 +862,32 @@ func showCmd() *cobra.Command {
 	}
 }
 
-// --- Implemented Server Commands ---
-
-func runToken(cmd *cobra.Command) error {
-	dbPath, _ := cmd.Flags().GetString("db")
-	isAdmin, _ := cmd.Flags().GetBool("admin")
-	agentID, _ := cmd.Flags().GetString("agent-id")
-
-	secret := os.Getenv("GROUND_JWT_SECRET")
-	if secret == "" {
-		return fmt.Errorf("GROUND_JWT_SECRET environment variable is required")
-	}
-
-	store, err := openDB(dbPath)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-
-	role := "agent"
-	if isAdmin {
-		role = "admin"
-		if agentID == "" {
-			agentID = "admin"
-		}
-	}
-
-	if agentID == "" {
-		return fmt.Errorf("--agent-id is required (or use --admin)")
-	}
-
-	tokenStr, err := api.IssueToken(store, []byte(secret), agentID, role)
-	if err != nil {
-		return fmt.Errorf("issue token: %w", err)
-	}
-
-	fmt.Println(tokenStr)
-	return nil
-}
-
 // --- Helpers ---
 
-func openDB(path string) (*db.Store, error) {
-	return db.Open(path)
+func openDB(path string) (*db.Store, error) { return db.Open(path) }
+
+func newIngester(store *db.Store) (*sources.Ingester, error) {
+	blobs, err := sources.NewFileBlobStore()
+	if err != nil {
+		return nil, err
+	}
+	return &sources.Ingester{
+		Store:   store,
+		Fetcher: sources.NewHTTPFetcher(),
+		Blobs:   blobs,
+	}, nil
 }
 
 func printJSON(v any) {
 	data, _ := json.MarshalIndent(v, "", "  ")
 	fmt.Println(string(data))
+}
+
+func nullable(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func slugify(s string) string {
@@ -782,3 +906,5 @@ func slugify(s string) string {
 	}
 	return strings.Trim(s, "-")
 }
+
+var _ = time.Now

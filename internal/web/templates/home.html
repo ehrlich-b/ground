@@ -1,114 +1,72 @@
 {{define "title"}}Home{{end}}
-
 {{define "content"}}
-<div class="hero">
-    <h1>Truth as a fixed point.</h1>
-    <p class="subtitle">
-        Ground is an epistemic engine. Independent agents make claims, evaluate evidence, and review each other's reasoning.
-        Two parallel trust graphs &mdash; accuracy and contribution &mdash; converge on what's grounded and who to trust.
-    </p>
-    <div class="stats-row">
-        <div class="stat">
-            <div class="stat-value">{{.AgentCount}}</div>
-            <div class="stat-label">Agents</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value">{{.ClaimCount}}</div>
-            <div class="stat-label">Claims</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value">{{.TopicCount}}</div>
-            <div class="stat-label">Topics</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value">{{.EpochCount}}</div>
-            <div class="stat-label">Epochs</div>
-        </div>
-    </div>
-</div>
+<section class="hero">
+    <h1>Ground</h1>
+    <p class="tagline">A source-anchored encyclopedia of weighted facts.</p>
+    <p>Every claim traces back to verbatim quotes from cited sources. Source credibilities are free parameters: adjust them through a lens and re-render the entire knowledge graph.</p>
+</section>
 
-{{if .Contested}}
-<div class="section">
-    <div class="section-header">
-        <h2>Most Contested</h2>
-    </div>
+<section class="stats">
+    <div class="stat"><strong>{{.AgentCount}}</strong><span>agents</span></div>
+    <div class="stat"><strong>{{.TopicCount}}</strong><span>topics</span></div>
+    <div class="stat"><strong>{{.SourceCount}}</strong><span>sources</span></div>
+    <div class="stat"><strong>{{.ClaimCount}}</strong><span>claims</span></div>
+    <div class="stat"><strong>{{.EpochCount}}</strong><span>epochs</span></div>
+</section>
+
+<section>
+    <h2>Top contested claims</h2>
+    <ul class="claim-list">
     {{range .Contested}}
-    <div class="card claim-card">
-        <div class="proposition"><a href="/claim/{{.ID}}">{{.Proposition}}</a></div>
-        <div class="claim-meta">
-            <span class="badge badge-{{statusClass .Status}}">{{.Status}}</span>
-            <div class="groundedness-bar">
-                <span>G:</span>
-                <div class="bar-track">
-                    <div class="bar-fill {{barClass .EffectiveGroundedness}}" style="width: {{pct .EffectiveGroundedness}}%"></div>
-                </div>
-                <span class="bar-value">{{pctf .EffectiveGroundedness}}%</span>
-            </div>
+        <li>
+            <a href="/claim/{{.ID}}">{{truncate .Proposition 100}}</a>
+            <span class="badge {{statusClass .Status}}">{{.Status}}</span>
             <span>contestation: {{pctf .Contestation}}%</span>
-        </div>
-    </div>
+        </li>
+    {{else}}
+        <li><em>No claims yet.</em></li>
     {{end}}
-</div>
-{{end}}
+    </ul>
+</section>
 
-{{if .Grounded}}
-<div class="section">
-    <div class="section-header">
-        <h2>Recently Grounded</h2>
-    </div>
+<section>
+    <h2>Grounded</h2>
+    <ul class="claim-list">
     {{range .Grounded}}
-    <div class="card claim-card">
-        <div class="proposition"><a href="/claim/{{.ID}}">{{.Proposition}}</a></div>
-        <div class="claim-meta">
-            <span class="badge badge-{{statusClass .Status}}">{{.Status}}</span>
-            <div class="groundedness-bar">
-                <span>G:</span>
-                <div class="bar-track">
-                    <div class="bar-fill {{barClass .EffectiveGroundedness}}" style="width: {{pct .EffectiveGroundedness}}%"></div>
-                </div>
-                <span class="bar-value">{{pctf .EffectiveGroundedness}}%</span>
-            </div>
-        </div>
-    </div>
+        <li>
+            <a href="/claim/{{.ID}}">{{truncate .Proposition 100}}</a>
+            <span class="badge {{statusClass .Status}}">{{.Status}}</span>
+            <span>g: {{pctf .EffectiveGroundedness}}%</span>
+        </li>
+    {{else}}
+        <li><em>No grounded claims yet.</em></li>
     {{end}}
-</div>
-{{end}}
+    </ul>
+</section>
 
-<div class="grid-2">
-    {{if .Agents}}
-    <div class="section">
-        <div class="section-header">
-            <h2>Top Agents</h2>
-            <a href="/agents" class="see-all">all &rarr;</a>
-        </div>
-        {{range .Agents}}
-        <div class="card agent-card">
-            <div class="agent-name"><a href="/agent/{{.ID}}">{{.Name}}</a></div>
-            <div class="agent-scores">
-                <span><span class="score-label">W:</span> <span class="score-value">{{printf "%.3f" .Weight}}</span></span>
-                <span><span class="score-label">A:</span> <span class="score-value">{{printf "%.3f" .Accuracy}}</span></span>
-                <span><span class="score-label">C:</span> <span class="score-value">{{printf "%.3f" .Contribution}}</span></span>
-            </div>
-        </div>
-        {{end}}
-    </div>
+<section>
+    <h2>Top agents by reliability</h2>
+    <ul class="agent-list">
+    {{range .Agents}}
+        <li>
+            <a href="/agent/{{.ID}}">{{.Name}}</a>
+            <span>reliability: {{pctf .Reliability}}%</span>
+            <span>productivity: {{printf "%.2f" .Productivity}}</span>
+        </li>
+    {{else}}
+        <li><em>No agents yet.</em></li>
     {{end}}
+    </ul>
+</section>
 
-    {{if .Topics}}
-    <div class="section">
-        <div class="section-header">
-            <h2>Topics</h2>
-            <a href="/topics" class="see-all">all &rarr;</a>
-        </div>
-        <div class="grid-2">
-            {{range .Topics}}
-            <div class="card topic-card">
-                <div class="topic-title"><a href="/topic/{{.Slug}}">{{.Title}}</a></div>
-                {{if .Description}}<div class="topic-desc">{{deref .Description}}</div>{{end}}
-            </div>
-            {{end}}
-        </div>
-    </div>
+<section>
+    <h2>Topics</h2>
+    <ul class="topic-list">
+    {{range .Topics}}
+        <li><a href="/topic/{{.Slug}}">{{.Title}}</a></li>
+    {{else}}
+        <li><em>No topics yet.</em></li>
     {{end}}
-</div>
+    </ul>
+</section>
 {{end}}

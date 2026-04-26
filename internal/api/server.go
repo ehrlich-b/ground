@@ -11,6 +11,7 @@ import (
 
 	"github.com/ehrlich-b/ground/internal/db"
 	"github.com/ehrlich-b/ground/internal/embed"
+	"github.com/ehrlich-b/ground/internal/sources"
 	"golang.org/x/time/rate"
 )
 
@@ -20,75 +21,90 @@ type Server struct {
 	jwtSecret []byte
 	mux       *http.ServeMux
 	limiters  *rateLimiters
+	ingester  *sources.Ingester
 }
 
 func NewServer(store *db.Store, embedder embed.Embedder, jwtSecret []byte) *Server {
+	blobs, err := sources.NewFileBlobStore()
+	if err != nil {
+		log.Fatalf("init blob store: %v", err)
+	}
 	s := &Server{
 		store:     store,
 		embedder:  embedder,
 		jwtSecret: jwtSecret,
 		mux:       http.NewServeMux(),
 		limiters:  newRateLimiters(),
+		ingester: &sources.Ingester{
+			Store:   store,
+			Fetcher: sources.NewHTTPFetcher(),
+			Blobs:   blobs,
+		},
 	}
 	s.routes()
 	return s
 }
 
-func (s *Server) Handler() http.Handler {
-	return s.mux
-}
-
-func (s *Server) Mux() *http.ServeMux {
-	return s.mux
-}
+func (s *Server) Handler() http.Handler { return s.mux }
+func (s *Server) Mux() *http.ServeMux   { return s.mux }
 
 func (s *Server) routes() {
-	// Authenticated routes
-	auth := s.mux
+	mux := s.mux
 
 	// Agents
-	auth.Handle("POST /api/agents", http.HandlerFunc(s.handleRegisterAgent))
-	auth.Handle("POST /api/agents/token", s.authMiddleware(http.HandlerFunc(s.handleRotateToken)))
-	auth.Handle("GET /api/agents/{id}", http.HandlerFunc(s.handleGetAgent))
-	auth.Handle("GET /api/agents/{id}/assertions", http.HandlerFunc(s.handleGetAgentAssertions))
-	auth.Handle("GET /api/agents/{id}/reviews", http.HandlerFunc(s.handleGetAgentReviews))
+	mux.Handle("POST /api/agents", http.HandlerFunc(s.handleRegisterAgent))
+	mux.Handle("POST /api/agents/token", s.authMiddleware(http.HandlerFunc(s.handleRotateToken)))
+	mux.Handle("GET /api/agents/{id}", http.HandlerFunc(s.handleGetAgent))
+	mux.Handle("GET /api/agents/leaderboard", http.HandlerFunc(s.handleAgentLeaderboard))
 
 	// Topics
-	auth.Handle("GET /api/topics", http.HandlerFunc(s.handleListTopics))
-	auth.Handle("GET /api/topics/{slug}", http.HandlerFunc(s.handleGetTopic))
-	auth.Handle("POST /api/topics", s.authMiddleware(http.HandlerFunc(s.requireAdmin(s.handleCreateTopic))))
+	mux.Handle("GET /api/topics", http.HandlerFunc(s.handleListTopics))
+	mux.Handle("GET /api/topics/{slug}", http.HandlerFunc(s.handleGetTopic))
+	mux.Handle("GET /api/topics/{slug}/claims", http.HandlerFunc(s.handleListClaimsByTopic))
+	mux.Handle("POST /api/topics", s.authMiddleware(http.HandlerFunc(s.requireAdmin(s.handleCreateTopic))))
 
-	// Claims (topic-filtered must come before {slug} catch-all — it's under topics)
-	auth.Handle("GET /api/topics/{slug}/claims", http.HandlerFunc(s.handleListClaimsByTopic))
+	// Sources
+	mux.Handle("GET /api/sources", http.HandlerFunc(s.handleListSources))
+	mux.Handle("GET /api/sources/{id}", http.HandlerFunc(s.handleGetSource))
+	mux.Handle("GET /api/sources/{id}/body", http.HandlerFunc(s.handleGetSourceBody))
+	mux.Handle("POST /api/sources/candidates", s.authMiddleware(http.HandlerFunc(s.handleCandidateSources)))
 
 	// Claims
-	auth.Handle("GET /api/claims", http.HandlerFunc(s.handleListClaims))
-	auth.Handle("GET /api/claims/{id}", http.HandlerFunc(s.handleGetClaim))
-	auth.Handle("POST /api/claims", s.authMiddleware(http.HandlerFunc(s.handleCreateClaim)))
+	mux.Handle("GET /api/claims", http.HandlerFunc(s.handleListClaims))
+	mux.Handle("GET /api/claims/{id}", http.HandlerFunc(s.handleGetClaim))
+	mux.Handle("GET /api/claims/{id}/gradient", http.HandlerFunc(s.handleClaimGradient))
+	mux.Handle("GET /api/claims/{id}/dependencies", http.HandlerFunc(s.handleGetClaimDependencies))
+	mux.Handle("POST /api/claims", s.authMiddleware(http.HandlerFunc(s.handleCreateClaim)))
 
-	// Assertions
-	auth.Handle("GET /api/assertions/{id}", http.HandlerFunc(s.handleGetAssertion))
-	auth.Handle("POST /api/assertions", s.authMiddleware(http.HandlerFunc(s.handleCreateAssertion)))
+	// Citations
+	mux.Handle("POST /api/citations", s.authMiddleware(http.HandlerFunc(s.handleCreateCitation)))
+	mux.Handle("GET /api/citations/{id}", http.HandlerFunc(s.handleGetCitation))
+	mux.Handle("GET /api/citations/{id}/audits", http.HandlerFunc(s.handleGetCitationAudits))
 
-	// Reviews
-	auth.Handle("GET /api/assertions/{id}/reviews", http.HandlerFunc(s.handleGetAssertionReviews))
-	auth.Handle("POST /api/reviews", s.authMiddleware(http.HandlerFunc(s.handleCreateReview)))
+	// Audits
+	mux.Handle("POST /api/audits", s.authMiddleware(http.HandlerFunc(s.handleCreateAudit)))
+	mux.Handle("GET /api/audits/queue", s.authMiddleware(http.HandlerFunc(s.handleAuditQueue)))
 
 	// Dependencies
-	auth.Handle("GET /api/claims/{id}/dependencies", http.HandlerFunc(s.handleGetClaimDependencies))
-	auth.Handle("POST /api/dependencies", s.authMiddleware(http.HandlerFunc(s.handleCreateDependency)))
+	mux.Handle("POST /api/dependencies", s.authMiddleware(http.HandlerFunc(s.handleCreateDependency)))
 
-	// Discovery (unauthenticated)
-	auth.Handle("GET /api/leaderboard", http.HandlerFunc(s.handleLeaderboard))
-	auth.Handle("GET /api/contested", http.HandlerFunc(s.handleContested))
-	auth.Handle("GET /api/frontier", http.HandlerFunc(s.handleFrontier))
-	auth.Handle("GET /api/epochs", http.HandlerFunc(s.handleListEpochs))
-	auth.Handle("GET /api/epochs/latest", http.HandlerFunc(s.handleLatestEpoch))
-	auth.Handle("GET /api/graph", http.HandlerFunc(s.handleGraph))
+	// Lenses
+	mux.Handle("POST /api/lenses", s.authMiddleware(http.HandlerFunc(s.handleCreateLens)))
+	mux.Handle("GET /api/lenses", http.HandlerFunc(s.handleListLenses))
+	mux.Handle("GET /api/lenses/{slug}", http.HandlerFunc(s.handleGetLens))
+	mux.Handle("PUT /api/lenses/{slug}/overrides", s.authMiddleware(http.HandlerFunc(s.handleSetLensOverrides)))
+	mux.Handle("POST /api/lenses/{slug}/fork", s.authMiddleware(http.HandlerFunc(s.handleForkLens)))
+
+	// Discovery
+	mux.Handle("GET /api/leaderboard", http.HandlerFunc(s.handleSourceLeaderboard))
+	mux.Handle("GET /api/contested", http.HandlerFunc(s.handleContested))
+	mux.Handle("GET /api/frontier", http.HandlerFunc(s.handleFrontier))
+	mux.Handle("GET /api/epochs", http.HandlerFunc(s.handleListEpochs))
+	mux.Handle("GET /api/epochs/latest", http.HandlerFunc(s.handleLatestEpoch))
+	mux.Handle("GET /api/graph", http.HandlerFunc(s.handleGraph))
 
 	// Admin
-	auth.Handle("POST /api/admin/adjudicate", s.authMiddleware(http.HandlerFunc(s.requireAdmin(s.handleAdjudicate))))
-	auth.Handle("POST /api/admin/cascade", s.authMiddleware(http.HandlerFunc(s.requireAdmin(s.handleCascade))))
+	mux.Handle("POST /api/admin/adjudicate", s.authMiddleware(http.HandlerFunc(s.requireAdmin(s.handleAdjudicate))))
 }
 
 // --- Context keys ---
@@ -100,10 +116,7 @@ const (
 	ctxRole    contextKey = "role"
 )
 
-func withAgentID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, ctxAgentID, id)
-}
-
+func withAgentID(ctx context.Context, id string) context.Context { return context.WithValue(ctx, ctxAgentID, id) }
 func getAgentID(ctx context.Context) string {
 	v, _ := ctx.Value(ctxAgentID).(string)
 	return v
@@ -112,7 +125,6 @@ func getAgentID(ctx context.Context) string {
 func withRole(ctx context.Context, role string) context.Context {
 	return context.WithValue(ctx, ctxRole, role)
 }
-
 func getRole(ctx context.Context) string {
 	v, _ := ctx.Value(ctxRole).(string)
 	return v
@@ -147,10 +159,6 @@ func writeData(w http.ResponseWriter, status int, data any) {
 	writeJSON(w, status, apiResponse{Data: data})
 }
 
-func writeDataMeta(w http.ResponseWriter, status int, data, meta any) {
-	writeJSON(w, status, apiResponse{Data: data, Meta: meta})
-}
-
 func writeError(w http.ResponseWriter, status int, code, message string, details any) {
 	writeJSON(w, status, apiError{Error: errorBody{Code: code, Message: message, Details: details}})
 }
@@ -171,9 +179,9 @@ func parseIntParam(r *http.Request, key string, defaultVal int) int {
 
 type rateLimiters struct {
 	mu       sync.Mutex
-	burst    map[string]*rate.Limiter    // per-agent burst limiter (10 rps)
-	daily    map[string]map[string]int   // agent -> action -> count
-	dailyDay string                      // YYYY-MM-DD of current daily window
+	burst    map[string]*rate.Limiter
+	daily    map[string]map[string]int
+	dailyDay string
 }
 
 func newRateLimiters() *rateLimiters {

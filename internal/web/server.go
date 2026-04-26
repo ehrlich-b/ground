@@ -1,18 +1,19 @@
+// Package web is the server-rendered HTML UI for Ground v2.
+//
+// All page routes are minimal during the v2 rebuild; the rich UI work lives in Phase 9.
 package web
 
 import (
 	"embed"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/ehrlich-b/ground/internal/db"
-	embedpkg "github.com/ehrlich-b/ground/internal/embed"
+	"github.com/ehrlich-b/ground/internal/lens"
 	"github.com/ehrlich-b/ground/internal/model"
 )
 
@@ -34,46 +35,46 @@ func NewServer(store *db.Store) *Server {
 }
 
 func (s *Server) Mount(mux *http.ServeMux) {
-	// Static files
 	staticSub, _ := fs.Sub(staticFS, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 
-	// Pages
 	mux.HandleFunc("GET /{$}", s.handleHome)
 	mux.HandleFunc("GET /topics", s.handleTopics)
 	mux.HandleFunc("GET /topic/{slug}", s.handleTopic)
 	mux.HandleFunc("GET /agents", s.handleAgents)
 	mux.HandleFunc("GET /agent/{id}", s.handleAgent)
+	mux.HandleFunc("GET /sources", s.handleSources)
+	mux.HandleFunc("GET /source/{id}", s.handleSource)
 	mux.HandleFunc("GET /claim/{id}", s.handleClaim)
+	mux.HandleFunc("GET /lenses", s.handleLenses)
+	mux.HandleFunc("GET /lens/{slug}", s.handleLens)
 	mux.HandleFunc("GET /about", s.handleAbout)
 	mux.HandleFunc("GET /graph", s.handleGraph)
 }
-
-// --- Template Loading ---
 
 var funcMap = template.FuncMap{
 	"pct":           func(f float64) string { return fmt.Sprintf("%.0f", f*100) },
 	"pctf":          func(f float64) string { return fmt.Sprintf("%.1f", f*100) },
 	"printf":        fmt.Sprintf,
 	"deref":         func(s *string) string { if s != nil { return *s }; return "" },
-	"derefStr":      func(s *string) string { if s != nil { return *s }; return "" },
 	"truncate":      truncate,
 	"statusClass":   statusClass,
 	"barClass":      barClass,
 	"colorForValue": colorForValue,
-	"mul":           func(a, b float64) float64 { return a * b },
-	"divBy":         func(a, b float64) float64 { if b == 0 { return 0 }; return a / b },
-	"add":           func(a, b int) int { return a + b },
 	"timeAgo":       timeAgo,
 }
 
 func (s *Server) loadTemplates() {
-	s.templates = make(map[string]*template.Template)
-	pages := []string{"home", "topic", "topics", "agent", "agents", "claim", "about", "graph"}
+	s.templates = map[string]*template.Template{}
+	pages := []string{"home", "topic", "topics", "agent", "agents", "claim", "about", "graph", "sources", "source", "lenses", "lens"}
 	for _, page := range pages {
-		t := template.Must(
-			template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/base.html", "templates/"+page+".html"),
-		)
+		t := template.New("").Funcs(funcMap)
+		// Each page is allowed to be missing during the rebuild; fall back to a generic page.
+		t, err := t.ParseFS(templateFS, "templates/base.html", "templates/"+page+".html")
+		if err != nil {
+			log.Printf("warning: template %s missing, using fallback: %v", page, err)
+			t = template.Must(template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/base.html", "templates/about.html"))
+		}
 		s.templates[page] = t
 	}
 }
@@ -91,43 +92,41 @@ func (s *Server) render(w http.ResponseWriter, page string, data any) {
 	}
 }
 
-// --- Handlers ---
-
 type homeData struct {
-	AgentCount int
-	ClaimCount int
-	TopicCount int
-	EpochCount int
-	Contested  []model.Claim
-	Grounded   []model.Claim
-	Agents     []model.Agent
-	Topics     []model.Topic
+	AgentCount  int
+	ClaimCount  int
+	TopicCount  int
+	SourceCount int
+	EpochCount  int
+	Contested   []model.Claim
+	Grounded    []model.Claim
+	Agents      []model.Agent
+	Topics      []model.Topic
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	agentCount, _ := s.store.CountAgents()
 	claimCount, _ := s.store.CountClaims()
 	topicCount, _ := s.store.CountTopics()
+	srcCount, _ := s.store.CountSources()
 	epochCount, _ := s.store.CountEpochs()
 	contested, _ := s.store.MostContestedClaims(10)
 	grounded, _ := s.store.ListGroundedClaims(10)
-	agents, _ := s.store.TopAgentsByWeight(10)
+	agents, _ := s.store.TopAgentsByReliability(10)
 	topics, _ := s.store.ListTopics()
-
-	// Limit topics for the home page grid
 	if len(topics) > 12 {
 		topics = topics[:12]
 	}
-
 	s.render(w, "home", homeData{
-		AgentCount: agentCount,
-		ClaimCount: claimCount,
-		TopicCount: topicCount,
-		EpochCount: epochCount,
-		Contested:  contested,
-		Grounded:   grounded,
-		Agents:     agents,
-		Topics:     topics,
+		AgentCount:  agentCount,
+		ClaimCount:  claimCount,
+		TopicCount:  topicCount,
+		SourceCount: srcCount,
+		EpochCount:  epochCount,
+		Contested:   contested,
+		Grounded:    grounded,
+		Agents:      agents,
+		Topics:      topics,
 	})
 }
 
@@ -143,16 +142,11 @@ func (s *Server) handleTopic(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-
-	// Find claims nearest to this topic by embedding proximity
-	claims := s.claimsForTopic(topic)
-	agents, _ := s.store.TopAgentsByWeight(5)
-
+	claims, _ := s.store.ListClaimsByTopic(slug, 50)
 	s.render(w, "topic", struct {
-		Topic     *model.Topic
-		Claims    []model.Claim
-		TopAgents []model.Agent
-	}{topic, claims, agents})
+		Topic  *model.Topic
+		Claims []model.Claim
+	}{topic, claims})
 }
 
 func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
@@ -160,16 +154,10 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "agents", struct{ Agents []model.Agent }{agents})
 }
 
-type assertionView struct {
-	model.Assertion
-	AgentName string
-	ClaimProp string
-	DepProp   string
-}
-
-type depView struct {
-	model.Dependency
-	DepProp string
+type citationView struct {
+	model.Citation
+	SourceURL   string
+	SourceTitle string
 }
 
 func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
@@ -179,23 +167,42 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-
-	assertions, _ := s.store.ListAssertionsByAgent(id, 100, 0)
-
-	// Enrich assertions with claim propositions
-	var views []assertionView
-	for _, a := range assertions {
-		v := assertionView{Assertion: a}
-		if claim, err := s.store.GetClaim(a.ClaimID); err == nil {
-			v.ClaimProp = claim.Proposition
-		}
-		views = append(views, v)
-	}
-
+	citations, _ := s.store.ListCitationsByExtractor(id, 50, 0)
+	audits, _ := s.store.ListAuditsByAuditor(id, 50, 0)
 	s.render(w, "agent", struct {
-		Agent      *model.Agent
-		Assertions []assertionView
-	}{agent, views})
+		Agent     *model.Agent
+		Citations []model.Citation
+		Audits    []model.Audit
+	}{agent, citations, audits})
+}
+
+func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
+	srcs, _ := s.store.ListSources(100, 0)
+	creds, _ := s.store.LatestSourceCredibility()
+	s.render(w, "sources", struct {
+		Sources     []model.Source
+		Credibility map[string]float64
+	}{srcs, creds})
+}
+
+func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	src, err := s.store.GetSource(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	tags, _ := s.store.ListSourceTags(id)
+	anchor, _ := s.store.GetSourceAnchor(id)
+	citations, _ := s.store.ListCitationsBySource(id)
+	creds, _ := s.store.LatestSourceCredibility()
+	s.render(w, "source", struct {
+		Source      *model.Source
+		Tags        []string
+		Anchor      *model.SourceAnchor
+		Citations   []model.Citation
+		Credibility float64
+	}{src, tags, anchor, citations, creds[id]})
 }
 
 func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
@@ -205,51 +212,53 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-
-	assertions, _ := s.store.ListAssertionsByClaim(id)
+	citations, _ := s.store.ListCitationsByClaim(id)
 	deps, _ := s.store.ListDependenciesByClaim(id)
 	dependents, _ := s.store.ListDependents(id)
 
-	// Enrich assertions with agent names
-	var assertionViews []assertionView
-	for _, a := range assertions {
-		v := assertionView{Assertion: a}
-		if ag, err := s.store.GetAgent(a.AgentID); err == nil {
-			v.AgentName = ag.Name
+	// Lens-aware re-render if requested.
+	var lensScore *lens.ClaimScore
+	lensSlug := r.URL.Query().Get("lens")
+	if lensSlug != "" {
+		if l, _ := s.store.GetLensBySlug(lensSlug); l != nil {
+			snap, err := lens.LoadSnapshot(s.store)
+			if err == nil {
+				spec, _ := lens.LoadLensSpec(s.store, l.ID)
+				score := lens.RenderClaim(snap, spec, id)
+				lensScore = &score
+			}
 		}
-		assertionViews = append(assertionViews, v)
 	}
-
-	// Enrich dependencies with claim propositions
-	var depViews []depView
-	for _, d := range deps {
-		v := depView{Dependency: d}
-		if c, err := s.store.GetClaim(d.DependsOnID); err == nil {
-			v.DepProp = c.Proposition
-		}
-		depViews = append(depViews, v)
-	}
-
-	var dependentViews []depView
-	for _, d := range dependents {
-		v := depView{Dependency: d}
-		if c, err := s.store.GetClaim(d.ClaimID); err == nil {
-			v.DepProp = c.Proposition
-		}
-		dependentViews = append(dependentViews, v)
-	}
-
-	// Build dependency tree for truthiness explorer
-	tree := s.buildDepTree(id, make(map[string]bool), 5)
-	treeJSON, _ := json.Marshal(tree)
 
 	s.render(w, "claim", struct {
 		Claim        *model.Claim
-		Assertions   []assertionView
-		Dependencies []depView
-		Dependents   []depView
-		TreeJSON     template.JS
-	}{claim, assertionViews, depViews, dependentViews, template.JS(treeJSON)})
+		Citations    []model.Citation
+		Dependencies []model.Dependency
+		Dependents   []model.Dependency
+		LensSlug     string
+		LensScore    *lens.ClaimScore
+	}{claim, citations, deps, dependents, lensSlug, lensScore})
+}
+
+func (s *Server) handleLenses(w http.ResponseWriter, r *http.Request) {
+	lenses, _ := s.store.ListLenses()
+	s.render(w, "lenses", struct{ Lenses []model.Lens }{lenses})
+}
+
+func (s *Server) handleLens(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	l, err := s.store.GetLensBySlug(slug)
+	if err != nil || l == nil {
+		http.NotFound(w, r)
+		return
+	}
+	overrides, _ := s.store.ListLensOverrides(l.ID)
+	tagOverrides, _ := s.store.ListLensTagOverrides(l.ID)
+	s.render(w, "lens", struct {
+		Lens         *model.Lens
+		Overrides    []model.LensOverride
+		TagOverrides []model.LensTagOverride
+	}{l, overrides, tagOverrides})
 }
 
 func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
@@ -258,109 +267,6 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "graph", nil)
-}
-
-// --- Dependency Tree ---
-
-type treeNode struct {
-	ID                    string     `json:"id"`
-	Proposition           string     `json:"proposition"`
-	Groundedness          float64    `json:"groundedness"`
-	EffectiveGroundedness float64    `json:"effective_groundedness"`
-	Status                string     `json:"status"`
-	Dependencies          []treeDep  `json:"dependencies"`
-}
-
-type treeDep struct {
-	Strength float64  `json:"strength"`
-	Node     treeNode `json:"node"`
-}
-
-func (s *Server) buildDepTree(claimID string, visited map[string]bool, maxDepth int) treeNode {
-	node := treeNode{ID: claimID}
-	if visited[claimID] || maxDepth <= 0 {
-		if c, err := s.store.GetClaim(claimID); err == nil {
-			node.Proposition = c.Proposition
-			node.Groundedness = c.Groundedness
-			node.EffectiveGroundedness = c.EffectiveGroundedness
-			node.Status = c.Status
-		}
-		return node
-	}
-	visited[claimID] = true
-
-	c, err := s.store.GetClaim(claimID)
-	if err != nil {
-		return node
-	}
-	node.Proposition = c.Proposition
-	node.Groundedness = c.Groundedness
-	node.EffectiveGroundedness = c.EffectiveGroundedness
-	node.Status = c.Status
-
-	deps, _ := s.store.ListDependenciesByClaim(claimID)
-	for _, d := range deps {
-		child := s.buildDepTree(d.DependsOnID, visited, maxDepth-1)
-		node.Dependencies = append(node.Dependencies, treeDep{
-			Strength: d.Strength,
-			Node:     child,
-		})
-	}
-	return node
-}
-
-// --- Helpers ---
-
-// claimsForTopic finds claims with highest embedding proximity to the given topic.
-func (s *Server) claimsForTopic(topic *model.Topic) []model.Claim {
-	if len(topic.Embedding) == 0 {
-		// No embedding on topic, return recent claims as fallback
-		claims, _ := s.store.ListClaims("", 50, 0)
-		return claims
-	}
-
-	topicVec := embedpkg.UnmarshalVector(topic.Embedding)
-	if len(topicVec) == 0 {
-		claims, _ := s.store.ListClaims("", 50, 0)
-		return claims
-	}
-
-	claimEmbeddings, err := s.store.ListClaimEmbeddings()
-	if err != nil {
-		return nil
-	}
-
-	type scored struct {
-		id  string
-		sim float64
-	}
-	var results []scored
-	for _, ce := range claimEmbeddings {
-		vec := embedpkg.UnmarshalVector(ce.Embedding)
-		if len(vec) == 0 {
-			continue
-		}
-		sim := embedpkg.CosineSimilarity(topicVec, vec)
-		if sim > 0.3 { // minimum relevance threshold
-			results = append(results, scored{id: ce.ID, sim: sim})
-		}
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].sim > results[j].sim
-	})
-
-	if len(results) > 50 {
-		results = results[:50]
-	}
-
-	var claims []model.Claim
-	for _, r := range results {
-		if c, err := s.store.GetClaim(r.id); err == nil {
-			claims = append(claims, *c)
-		}
-	}
-	return claims
 }
 
 func truncate(s string, n int) string {

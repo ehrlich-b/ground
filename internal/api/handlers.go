@@ -1,14 +1,15 @@
 package api
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/ehrlich-b/ground/internal/db"
 	"github.com/ehrlich-b/ground/internal/embed"
+	"github.com/ehrlich-b/ground/internal/lens"
 	"github.com/ehrlich-b/ground/internal/model"
 )
 
@@ -17,6 +18,7 @@ import (
 func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name     string  `json:"name"`
+		Role     string  `json:"role"`
 		Metadata *string `json:"metadata,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -27,14 +29,22 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "name is required", nil)
 		return
 	}
+	role := req.Role
+	if role == "" {
+		role = "both"
+	}
+	if !validRole(role) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid role", nil)
+		return
+	}
 
-	agentID := generateID()
+	agentID := db.GenerateID()
 	agent := &model.Agent{
 		ID:           agentID,
 		Name:         req.Name,
-		Accuracy:     1.0,
-		Contribution: 1.0,
-		Weight:       2.0,
+		Role:         role,
+		Reliability:  0.5,
+		Productivity: 0.0,
 		Metadata:     req.Metadata,
 	}
 	if err := s.store.CreateAgent(agent); err != nil {
@@ -42,59 +52,25 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create JWT
-	tokenStr, err := createJWT(s.jwtSecret, agentID, "agent")
+	tokenStr, err := IssueToken(s.store, s.jwtSecret, agentID, "agent")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to create token", nil)
 		return
 	}
-
-	// Store token hash
-	tok := &model.APIToken{
-		ID:        generateID(),
-		AgentID:   agentID,
-		TokenHash: hashToken(tokenStr),
-		Role:      "agent",
-		ExpiresAt: time.Now().Add(90 * 24 * time.Hour),
-	}
-	if err := s.store.CreateAPIToken(tok); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store token", nil)
-		return
-	}
-
-	writeData(w, http.StatusCreated, map[string]any{
-		"agent": agent,
-		"token": tokenStr,
-	})
+	writeData(w, http.StatusCreated, map[string]any{"agent": agent, "token": tokenStr})
 }
 
 func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 	agentID := getAgentID(r.Context())
-
-	// Revoke all existing tokens for this agent
 	if err := s.store.RevokeAgentTokens(agentID); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to revoke old tokens", nil)
 		return
 	}
-
-	tokenStr, err := createJWT(s.jwtSecret, agentID, "agent")
+	tokenStr, err := IssueToken(s.store, s.jwtSecret, agentID, "agent")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to create token", nil)
 		return
 	}
-
-	tok := &model.APIToken{
-		ID:        generateID(),
-		AgentID:   agentID,
-		TokenHash: hashToken(tokenStr),
-		Role:      "agent",
-		ExpiresAt: time.Now().Add(90 * 24 * time.Hour),
-	}
-	if err := s.store.CreateAPIToken(tok); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store token", nil)
-		return
-	}
-
 	writeData(w, http.StatusOK, map[string]any{"token": tokenStr})
 }
 
@@ -105,33 +81,31 @@ func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "agent not found", nil)
 		return
 	}
-	writeData(w, http.StatusOK, agent)
+	citations, _ := s.store.ListCitationsByExtractor(id, 50, 0)
+	audits, _ := s.store.ListAuditsByAuditor(id, 50, 0)
+	writeData(w, http.StatusOK, map[string]any{
+		"agent":           agent,
+		"recent_citations": citations,
+		"recent_audits":    audits,
+	})
 }
 
-func (s *Server) handleGetAgentAssertions(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	limit := parseIntParam(r, "limit", 50)
-	offset := parseIntParam(r, "offset", 0)
-
-	assertions, err := s.store.ListAssertionsByAgent(id, limit, offset)
+func (s *Server) handleAgentLeaderboard(w http.ResponseWriter, r *http.Request) {
+	limit := parseIntParam(r, "limit", 25)
+	agents, err := s.store.TopAgentsByReliability(limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list assertions", nil)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "leaderboard failed", nil)
 		return
 	}
-	writeData(w, http.StatusOK, assertions)
+	writeData(w, http.StatusOK, agents)
 }
 
-func (s *Server) handleGetAgentReviews(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	limit := parseIntParam(r, "limit", 50)
-	offset := parseIntParam(r, "offset", 0)
-
-	reviews, err := s.store.ListReviewsByReviewer(id, limit, offset)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list reviews", nil)
-		return
+func validRole(r string) bool {
+	switch r {
+	case "extractor", "auditor", "both", "observer":
+		return true
 	}
-	writeData(w, http.StatusOK, reviews)
+	return false
 }
 
 // --- Topics ---
@@ -168,58 +142,15 @@ func (s *Server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "title is required", nil)
 		return
 	}
-
-	// Generate embedding
 	vec, err := s.embedder.Embed(req.Title + ": " + req.Description)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "EMBED_FAILED", "failed to generate embedding", nil)
 		return
 	}
-
-	// Exclusion check
-	exclusions, err := s.store.ListTopicExclusions()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to check exclusions", nil)
-		return
-	}
-	var anchors []embed.ExclusionAnchor
-	for _, e := range exclusions {
-		anchors = append(anchors, embed.ExclusionAnchor{
-			ID: e.ID, Description: e.Description, Embedding: e.Embedding, Threshold: e.Threshold,
-		})
-	}
-	if hit := embed.CheckExclusions(vec, anchors); hit != nil {
-		writeError(w, http.StatusForbidden, "EXCLUDED_TOPIC", "topic is too close to an excluded category", map[string]any{
-			"exclusion": hit.Description,
-		})
-		return
-	}
-
-	// Duplicate topic check
-	topicEmbeddings, err := s.store.ListTopicEmbeddings()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to check duplicates", nil)
-		return
-	}
-	var topicsForCheck []embed.TopicWithEmbedding
-	for _, t := range topicEmbeddings {
-		topicsForCheck = append(topicsForCheck, embed.TopicWithEmbedding{
-			ID: t.ID, Slug: t.Slug, Title: t.Title, Embedding: t.Embedding,
-		})
-	}
-	nearest := embed.FindNearestTopics(vec, topicsForCheck, 1)
-	if len(nearest) > 0 && nearest[0].Similarity > 0.95 {
-		writeError(w, http.StatusConflict, "DUPLICATE_TOPIC", "a very similar topic already exists", map[string]any{
-			"existing_topic": nearest[0].Slug,
-			"similarity":     nearest[0].Similarity,
-		})
-		return
-	}
-
 	slug := slugify(req.Title)
 	desc := req.Description
 	topic := &model.Topic{
-		ID:          generateID(),
+		ID:          db.GenerateID(),
 		Title:       req.Title,
 		Slug:        slug,
 		Description: &desc,
@@ -229,37 +160,107 @@ func (s *Server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to create topic", nil)
 		return
 	}
-
-	// Return with proximity to existing topics
-	var proximity []map[string]any
-	allNearest := embed.FindNearestTopics(vec, topicsForCheck, 5)
-	for _, n := range allNearest {
-		proximity = append(proximity, map[string]any{
-			"topic_slug": n.Slug,
-			"similarity": n.Similarity,
-		})
-	}
-
-	writeData(w, http.StatusCreated, map[string]any{
-		"topic":     topic,
-		"proximity": proximity,
-	})
+	writeData(w, http.StatusCreated, map[string]any{"topic": topic})
 }
 
 func (s *Server) handleListClaimsByTopic(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	limit := parseIntParam(r, "limit", 100)
-
 	claims, err := s.store.ListClaimsByTopic(slug, limit)
 	if err != nil {
-		if strings.Contains(err.Error(), "get topic") {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "topic not found", nil)
-			return
-		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list claims by topic", nil)
 		return
 	}
 	writeData(w, http.StatusOK, claims)
+}
+
+// --- Sources ---
+
+func (s *Server) handleListSources(w http.ResponseWriter, r *http.Request) {
+	limit := parseIntParam(r, "limit", 50)
+	offset := parseIntParam(r, "offset", 0)
+	srcs, err := s.store.ListSources(limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list sources", nil)
+		return
+	}
+	writeData(w, http.StatusOK, srcs)
+}
+
+func (s *Server) handleGetSource(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	src, err := s.store.GetSource(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "source not found", nil)
+		return
+	}
+	tags, _ := s.store.ListSourceTags(id)
+	anchor, _ := s.store.GetSourceAnchor(id)
+	citations, _ := s.store.ListCitationsBySource(id)
+	creds, _ := s.store.LatestSourceCredibility()
+	writeData(w, http.StatusOK, map[string]any{
+		"source":      src,
+		"tags":        tags,
+		"anchor":      anchor,
+		"credibility": creds[id],
+		"citations":   citations,
+	})
+}
+
+func (s *Server) handleGetSourceBody(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	src, err := s.store.GetSource(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "source not found", nil)
+		return
+	}
+	body, err := s.ingester.LoadBody(src)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to load body", nil)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(body)
+}
+
+func (s *Server) handleCandidateSources(w http.ResponseWriter, r *http.Request) {
+	agentID := getAgentID(r.Context())
+	if !s.limiters.checkBurst(agentID) {
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many requests", nil)
+		return
+	}
+	if !s.limiters.checkDaily(agentID, "source_candidates", 100) {
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "daily candidate limit reached", nil)
+		return
+	}
+	var req struct {
+		Candidates []struct {
+			URL       string `json:"url"`
+			Reasoning string `json:"reasoning"`
+		} `json:"candidates"`
+		TopicSlug string `json:"topic_slug,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body", nil)
+		return
+	}
+	var ingested []map[string]any
+	for _, c := range req.Candidates {
+		if c.URL == "" {
+			continue
+		}
+		res, err := s.ingester.Ingest(c.URL)
+		if err != nil {
+			ingested = append(ingested, map[string]any{"url": c.URL, "error": err.Error()})
+			continue
+		}
+		ingested = append(ingested, map[string]any{
+			"url":       c.URL,
+			"source_id": res.Source.ID,
+			"reused":    res.Reused,
+		})
+	}
+	writeData(w, http.StatusCreated, map[string]any{"results": ingested})
 }
 
 // --- Claims ---
@@ -268,7 +269,6 @@ func (s *Server) handleListClaims(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	limit := parseIntParam(r, "limit", 50)
 	offset := parseIntParam(r, "offset", 0)
-
 	claims, err := s.store.ListClaims(status, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list claims", nil)
@@ -284,43 +284,68 @@ func (s *Server) handleGetClaim(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "claim not found", nil)
 		return
 	}
-
-	// Include assertions and dependencies
-	assertions, _ := s.store.ListAssertionsByClaim(id)
+	citations, _ := s.store.ListCitationsByClaim(id)
 	deps, _ := s.store.ListDependenciesByClaim(id)
 	dependents, _ := s.store.ListDependents(id)
 
-	writeData(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"claim":        claim,
-		"assertions":   assertions,
+		"citations":    citations,
 		"dependencies": deps,
 		"dependents":   dependents,
-	})
+	}
+
+	// Lens-aware re-render if requested.
+	lensSlug := r.URL.Query().Get("lens")
+	if lensSlug != "" {
+		if lensRow, _ := s.store.GetLensBySlug(lensSlug); lensRow != nil {
+			snap, err := lens.LoadSnapshot(s.store)
+			if err == nil {
+				spec, err := lens.LoadLensSpec(s.store, lensRow.ID)
+				if err == nil {
+					score := lens.RenderClaim(snap, spec, id)
+					resp["lens_score"] = score
+				}
+			}
+		}
+	}
+	writeData(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleClaimGradient(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	limit := parseIntParam(r, "limit", 5)
+	snap, err := lens.LoadSnapshot(s.store)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "snapshot failed", nil)
+		return
+	}
+	spec := &lens.LensSpec{}
+	if lensSlug := r.URL.Query().Get("lens"); lensSlug != "" {
+		if lensRow, _ := s.store.GetLensBySlug(lensSlug); lensRow != nil {
+			spec, _ = lens.LoadLensSpec(s.store, lensRow.ID)
+		}
+	}
+	g := lens.Gradient(snap, spec, id, limit)
+	writeData(w, http.StatusOK, g)
 }
 
 func (s *Server) handleCreateClaim(w http.ResponseWriter, r *http.Request) {
 	agentID := getAgentID(r.Context())
-
 	if !s.limiters.checkBurst(agentID) {
-		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many requests per second", nil)
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many requests", nil)
 		return
 	}
-	if !s.limiters.checkDaily(agentID, "claims", 100) {
-		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "daily claim limit reached (100/day)", nil)
+	if !s.limiters.checkDaily(agentID, "claims", 50) {
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "daily claim limit reached", nil)
 		return
 	}
 
 	var req struct {
-		Proposition string  `json:"proposition"`
-		TopicSlug   string  `json:"topic_slug"`
-		Confidence  float64 `json:"confidence"`
-		Reasoning   string  `json:"reasoning"`
-		Sources     string  `json:"sources,omitempty"`
-		DependsOn   []struct {
-			ClaimID   string  `json:"claim_id"`
-			Strength  float64 `json:"strength"`
-			Reasoning string  `json:"reasoning"`
-		} `json:"depends_on,omitempty"`
+		Proposition string                   `json:"proposition"`
+		Citations   []citationInput          `json:"citations"`
+		DependsOn   []dependencyInput        `json:"depends_on,omitempty"`
+		TopicSlug   string                   `json:"topic_slug,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body", nil)
@@ -330,74 +355,35 @@ func (s *Server) handleCreateClaim(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "proposition is required", nil)
 		return
 	}
-	if req.Confidence < 0 || req.Confidence > 1 {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "confidence must be between 0 and 1", nil)
+	if len(req.Citations) == 0 {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "at least one citation is required", nil)
 		return
 	}
 
-	// Generate embedding
 	vec, err := s.embedder.Embed(req.Proposition)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "EMBED_FAILED", "failed to generate embedding", nil)
+		writeError(w, http.StatusInternalServerError, "EMBED_FAILED", "failed to embed", nil)
 		return
 	}
-
 	// Duplicate check
-	claimEmbeddings, err := s.store.ListClaimEmbeddings()
+	embeddings, err := s.store.ListClaimEmbeddings()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to check duplicates", nil)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "duplicate check failed", nil)
 		return
 	}
-	var claimsForCheck []embed.ClaimWithEmbedding
-	for _, c := range claimEmbeddings {
-		claimsForCheck = append(claimsForCheck, embed.ClaimWithEmbedding{
-			ID: c.ID, Proposition: c.Proposition, Embedding: c.Embedding,
-		})
+	var checks []embed.ClaimWithEmbedding
+	for _, c := range embeddings {
+		checks = append(checks, embed.ClaimWithEmbedding{ID: c.ID, Proposition: c.Proposition, Embedding: c.Embedding})
 	}
-	dupes := embed.FindDuplicates(vec, claimsForCheck, 0.95)
-	if len(dupes) > 0 {
-		writeError(w, http.StatusConflict, "DUPLICATE_CLAIM", "a claim with very similar proposition already exists", map[string]any{
-			"existing_claim_id": dupes[0].ClaimID,
-			"similarity":        dupes[0].Similarity,
+	if dupes := embed.FindDuplicates(vec, checks, 0.95); len(dupes) > 0 {
+		writeError(w, http.StatusConflict, "DUPLICATE_CLAIM", "near-duplicate claim exists", map[string]any{
+			"dup_of":     dupes[0].ClaimID,
+			"similarity": dupes[0].Similarity,
 		})
 		return
 	}
 
-	// Exclusion check
-	exclusions, err := s.store.ListTopicExclusions()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to check exclusions", nil)
-		return
-	}
-	var anchors []embed.ExclusionAnchor
-	for _, e := range exclusions {
-		anchors = append(anchors, embed.ExclusionAnchor{
-			ID: e.ID, Description: e.Description, Embedding: e.Embedding, Threshold: e.Threshold,
-		})
-	}
-	if hit := embed.CheckExclusions(vec, anchors); hit != nil {
-		writeError(w, http.StatusForbidden, "EXCLUDED_CONTENT", "claim is too close to an excluded category", map[string]any{
-			"exclusion": hit.Description,
-		})
-		return
-	}
-
-	// Topic proximity
-	topicEmbeddings, err := s.store.ListTopicEmbeddings()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to check topic proximity", nil)
-		return
-	}
-	var topicsForCheck []embed.TopicWithEmbedding
-	for _, t := range topicEmbeddings {
-		topicsForCheck = append(topicsForCheck, embed.TopicWithEmbedding{
-			ID: t.ID, Slug: t.Slug, Title: t.Title, Embedding: t.Embedding,
-		})
-	}
-	nearestTopics := embed.FindNearestTopics(vec, topicsForCheck, 5)
-
-	// Create claim
-	claimID := generateID()
+	claimID := db.GenerateID()
 	claim := &model.Claim{
 		ID:          claimID,
 		Proposition: req.Proposition,
@@ -409,349 +395,321 @@ func (s *Server) handleCreateClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-assert (the submitter supports their own claim)
-	var reasoning *string
-	if req.Reasoning != "" {
-		reasoning = &req.Reasoning
-	}
-	var sources *string
-	if req.Sources != "" {
-		sources = &req.Sources
-	}
-	assertion := &model.Assertion{
-		ID:         generateID(),
-		AgentID:    agentID,
-		ClaimID:    claimID,
-		Stance:     "support",
-		Confidence: req.Confidence,
-		Reasoning:  reasoning,
-		Sources:    sources,
-	}
-	if err := s.store.CreateAssertion(assertion); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to create auto-assertion", nil)
-		return
-	}
-
-	// Create dependencies
-	for _, dep := range req.DependsOn {
-		cycle, err := s.store.HasCycle(claimID, dep.ClaimID)
+	var createdCitations []model.Citation
+	for _, ci := range req.Citations {
+		cit, errCode, errMsg, err := s.persistCitation(agentID, claimID, ci)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to check dependency cycle", nil)
+			writeError(w, http.StatusBadRequest, errCode, errMsg, nil)
 			return
 		}
-		if cycle {
-			continue // skip cyclic dependencies silently
-		}
-		var depReasoning *string
-		if dep.Reasoning != "" {
-			depReasoning = &dep.Reasoning
-		}
-		d := &model.Dependency{
-			ID:          generateID(),
-			ClaimID:     claimID,
-			DependsOnID: dep.ClaimID,
-			Strength:    dep.Strength,
-			Reasoning:   depReasoning,
-		}
-		s.store.CreateDependency(d)
+		createdCitations = append(createdCitations, *cit)
 	}
 
-	// Build response with topic proximity
-	var proximity []map[string]any
-	for _, n := range nearestTopics {
-		proximity = append(proximity, map[string]any{
-			"topic_slug": n.Slug,
-			"similarity": n.Similarity,
+	for _, dep := range req.DependsOn {
+		if dep.ClaimID == "" {
+			continue
+		}
+		cycle, _ := s.store.HasCycle(claimID, dep.ClaimID)
+		if cycle {
+			continue
+		}
+		var reasoning *string
+		if dep.Reasoning != "" {
+			reasoning = &dep.Reasoning
+		}
+		strength := dep.Strength
+		if strength == 0 {
+			strength = 1.0
+		}
+		s.store.CreateDependency(&model.Dependency{
+			ID:          db.GenerateID(),
+			ClaimID:     claimID,
+			DependsOnID: dep.ClaimID,
+			Strength:    strength,
+			Reasoning:   reasoning,
 		})
 	}
 
-	// Find near-duplicates to suggest (0.7 - 0.95 similarity)
-	nearDupes := embed.FindDuplicates(vec, claimsForCheck, 0.7)
-	var similar []map[string]any
-	for _, d := range nearDupes {
-		if d.Similarity < 0.95 {
-			similar = append(similar, map[string]any{
-				"claim_id":    d.ClaimID,
-				"proposition": d.Proposition,
-				"similarity":  d.Similarity,
-			})
-		}
-	}
-
 	writeData(w, http.StatusCreated, map[string]any{
-		"claim":            claim,
-		"assertion":        assertion,
-		"topic_proximity":  proximity,
-		"similar_claims":   similar,
+		"claim":     claim,
+		"citations": createdCitations,
 	})
 }
 
-// --- Assertions ---
+// --- Citations ---
 
-func (s *Server) handleGetAssertion(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	assertion, err := s.store.GetAssertion(id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "assertion not found", nil)
-		return
-	}
-
-	reviews, _ := s.store.ListReviewsByAssertion(id)
-
-	writeData(w, http.StatusOK, map[string]any{
-		"assertion": assertion,
-		"reviews":   reviews,
-	})
+type citationInput struct {
+	SourceID      string  `json:"source_id,omitempty"`
+	URL           string  `json:"url,omitempty"`
+	VerbatimQuote string  `json:"verbatim_quote"`
+	Locator       any     `json:"locator,omitempty"`
+	Polarity      string  `json:"polarity"`
+	Reasoning     string  `json:"reasoning,omitempty"`
 }
 
-func (s *Server) handleCreateAssertion(w http.ResponseWriter, r *http.Request) {
+type dependencyInput struct {
+	ClaimID   string  `json:"claim_id"`
+	Strength  float64 `json:"strength"`
+	Reasoning string  `json:"reasoning,omitempty"`
+}
+
+func (s *Server) handleCreateCitation(w http.ResponseWriter, r *http.Request) {
 	agentID := getAgentID(r.Context())
-
 	if !s.limiters.checkBurst(agentID) {
-		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many requests per second", nil)
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many requests", nil)
 		return
 	}
-	if !s.limiters.checkDaily(agentID, "assertions", 500) {
-		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "daily assertion limit reached (500/day)", nil)
+	if !s.limiters.checkDaily(agentID, "citations", 100) {
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "daily citation limit reached", nil)
 		return
 	}
 
 	var req struct {
-		ClaimID             string  `json:"claim_id"`
-		Stance              string  `json:"stance"`
-		Confidence          float64 `json:"confidence"`
-		Reasoning           string  `json:"reasoning,omitempty"`
-		Sources             string  `json:"sources,omitempty"`
-		RefinedProposition  string  `json:"refined_proposition,omitempty"`
+		ClaimID string        `json:"claim_id"`
+		citationInput
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body", nil)
 		return
 	}
-	if req.ClaimID == "" || req.Stance == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "claim_id and stance are required", nil)
+	if req.ClaimID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "claim_id is required", nil)
 		return
 	}
-	if req.Stance != "support" && req.Stance != "contest" && req.Stance != "refine" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "stance must be support, contest, or refine", nil)
-		return
-	}
-	if req.Confidence < 0 || req.Confidence > 1 {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "confidence must be between 0 and 1", nil)
-		return
-	}
-	if req.Stance == "refine" && req.RefinedProposition == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "refined_proposition required for refine stance", nil)
-		return
-	}
-
-	// Check claim exists
-	_, err := s.store.GetClaim(req.ClaimID)
-	if err != nil {
+	if _, err := s.store.GetClaim(req.ClaimID); err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "claim not found", nil)
 		return
 	}
 
-	var reasoning, sources *string
-	if req.Reasoning != "" {
-		reasoning = &req.Reasoning
-	}
-	if req.Sources != "" {
-		sources = &req.Sources
-	}
-
-	// Check if assertion already exists (update flow)
-	existing, err := s.store.GetAssertionByAgentClaim(agentID, req.ClaimID)
-	if err == nil && existing != nil {
-		// Update existing assertion
-		existing.Stance = req.Stance
-		existing.Confidence = req.Confidence
-		existing.Reasoning = reasoning
-		existing.Sources = sources
-		if err := s.store.UpdateAssertion(existing); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to update assertion", nil)
-			return
-		}
-		writeData(w, http.StatusOK, map[string]any{"assertion": existing, "updated": true})
-		return
-	}
-
-	assertion := &model.Assertion{
-		ID:         generateID(),
-		AgentID:    agentID,
-		ClaimID:    req.ClaimID,
-		Stance:     req.Stance,
-		Confidence: req.Confidence,
-		Reasoning:  reasoning,
-		Sources:    sources,
-	}
-
-	// Handle refine — create child claim
-	if req.Stance == "refine" {
-		vec, err := s.embedder.Embed(req.RefinedProposition)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "EMBED_FAILED", "failed to embed refined proposition", nil)
-			return
-		}
-
-		childID := generateID()
-		parentID := req.ClaimID
-		child := &model.Claim{
-			ID:            childID,
-			Proposition:   req.RefinedProposition,
-			Embedding:     embed.MarshalVector(vec),
-			Status:        "active",
-			ParentClaimID: &parentID,
-		}
-		if err := s.store.CreateClaim(child); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to create refined claim", nil)
-			return
-		}
-
-		assertion.RefinementClaimID = &childID
-		if err := s.store.CreateAssertion(assertion); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to create assertion", nil)
-			return
-		}
-
-		// Auto-support the refined claim
-		childAssertion := &model.Assertion{
-			ID:         generateID(),
-			AgentID:    agentID,
-			ClaimID:    childID,
-			Stance:     "support",
-			Confidence: req.Confidence,
-			Reasoning:  reasoning,
-			Sources:    sources,
-		}
-		s.store.CreateAssertion(childAssertion)
-
-		writeData(w, http.StatusCreated, map[string]any{
-			"assertion":     assertion,
-			"refined_claim": child,
-		})
-		return
-	}
-
-	if err := s.store.CreateAssertion(assertion); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to create assertion", nil)
-		return
-	}
-	writeData(w, http.StatusCreated, map[string]any{"assertion": assertion})
-}
-
-// --- Reviews ---
-
-func (s *Server) handleGetAssertionReviews(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	reviews, err := s.store.ListReviewsByAssertion(id)
+	cit, errCode, errMsg, err := s.persistCitation(agentID, req.ClaimID, req.citationInput)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list reviews", nil)
+		writeError(w, http.StatusBadRequest, errCode, errMsg, nil)
 		return
 	}
-	writeData(w, http.StatusOK, reviews)
+	writeData(w, http.StatusCreated, map[string]any{"citation": cit})
 }
 
-func (s *Server) handleCreateReview(w http.ResponseWriter, r *http.Request) {
-	agentID := getAgentID(r.Context())
+// persistCitation handles source resolution, the mechanical containment check, and DB insert.
+func (s *Server) persistCitation(agentID, claimID string, in citationInput) (*model.Citation, string, string, error) {
+	if in.VerbatimQuote == "" {
+		return nil, "INVALID_REQUEST", "verbatim_quote is required", fmt.Errorf("missing quote")
+	}
+	if in.Polarity != "supports" && in.Polarity != "contradicts" && in.Polarity != "qualifies" {
+		return nil, "INVALID_REQUEST", "polarity must be supports, contradicts, or qualifies", fmt.Errorf("bad polarity")
+	}
 
-	if !s.limiters.checkBurst(agentID) {
-		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many requests per second", nil)
+	var src *model.Source
+	if in.SourceID != "" {
+		got, err := s.store.GetSource(in.SourceID)
+		if err != nil {
+			return nil, "NOT_FOUND", "source not found", err
+		}
+		src = got
+	} else if in.URL != "" {
+		got, err := s.store.GetSourceByURL(in.URL)
+		if err != nil {
+			return nil, "INTERNAL", "lookup failed", err
+		}
+		if got == nil {
+			res, err := s.ingester.Ingest(in.URL)
+			if err != nil {
+				return nil, "FETCH_FAILED", fmt.Sprintf("could not ingest url: %v", err), err
+			}
+			src = res.Source
+		} else {
+			src = got
+		}
+	} else {
+		return nil, "INVALID_REQUEST", "source_id or url required", fmt.Errorf("missing source")
+	}
+
+	body, err := s.ingester.LoadBody(src)
+	if err != nil {
+		return nil, "INTERNAL", "could not load source body", err
+	}
+	if !db.HasSourceQuote(string(body), in.VerbatimQuote) {
+		return nil, "MECHANICAL_FAIL", "verbatim_quote not found in source body", fmt.Errorf("mechanical fail")
+	}
+
+	var locatorJSON *string
+	if in.Locator != nil {
+		bytes, _ := json.Marshal(in.Locator)
+		s := string(bytes)
+		locatorJSON = &s
+	}
+	var reasoning *string
+	if in.Reasoning != "" {
+		reasoning = &in.Reasoning
+	}
+	cit := &model.Citation{
+		ID:            db.GenerateID(),
+		ClaimID:       claimID,
+		SourceID:      src.ID,
+		VerbatimQuote: in.VerbatimQuote,
+		Locator:       locatorJSON,
+		Polarity:      in.Polarity,
+		Reasoning:     reasoning,
+		ExtractorID:   agentID,
+		AuditFactor:   1.0,
+		Status:        "active",
+	}
+	if err := s.store.CreateCitation(cit); err != nil {
+		return nil, "INTERNAL", "failed to persist citation", err
+	}
+	return cit, "", "", nil
+}
+
+func (s *Server) handleGetCitation(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	cit, err := s.store.GetCitation(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "citation not found", nil)
 		return
 	}
-	if !s.limiters.checkDaily(agentID, "reviews", 1000) {
-		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "daily review limit reached (1000/day)", nil)
+	src, _ := s.store.GetSource(cit.SourceID)
+	claim, _ := s.store.GetClaim(cit.ClaimID)
+	audits, _ := s.store.ListAuditsByCitation(id)
+	writeData(w, http.StatusOK, map[string]any{
+		"citation": cit,
+		"source":   src,
+		"claim":    claim,
+		"audits":   audits,
+	})
+}
+
+func (s *Server) handleGetCitationAudits(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	audits, err := s.store.ListAuditsByCitation(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "list failed", nil)
+		return
+	}
+	writeData(w, http.StatusOK, audits)
+}
+
+// --- Audits ---
+
+func (s *Server) handleCreateAudit(w http.ResponseWriter, r *http.Request) {
+	agentID := getAgentID(r.Context())
+	if !s.limiters.checkBurst(agentID) {
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many requests", nil)
+		return
+	}
+	if !s.limiters.checkDaily(agentID, "audits", 500) {
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "daily audit limit reached", nil)
 		return
 	}
 
 	var req struct {
-		AssertionID string  `json:"assertion_id"`
-		Helpfulness float64 `json:"helpfulness"`
-		Reasoning   string  `json:"reasoning,omitempty"`
+		CitationID string `json:"citation_id"`
+		Semantic   string `json:"semantic"`
+		Reasoning  string `json:"reasoning"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body", nil)
 		return
 	}
-	if req.AssertionID == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "assertion_id is required", nil)
+	if req.CitationID == "" || req.Semantic == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "citation_id and semantic required", nil)
 		return
 	}
-	if req.Helpfulness < 0 || req.Helpfulness > 1 {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "helpfulness must be between 0 and 1", nil)
+	if !validSemantic(req.Semantic) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid semantic verdict", nil)
 		return
 	}
 
-	// Check assertion exists
-	assertion, err := s.store.GetAssertion(req.AssertionID)
+	cit, err := s.store.GetCitation(req.CitationID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "assertion not found", nil)
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "citation not found", nil)
+		return
+	}
+	if cit.ExtractorID == agentID {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "cannot audit your own citation", nil)
 		return
 	}
 
-	// Can't review your own assertions
-	if assertion.AgentID == agentID {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "cannot review your own assertion", nil)
+	src, err := s.store.GetSource(cit.SourceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "source missing", nil)
 		return
+	}
+	body, err := s.ingester.LoadBody(src)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "body missing", nil)
+		return
+	}
+	mech := "pass"
+	if !db.HasSourceQuote(string(body), cit.VerbatimQuote) {
+		mech = "fail"
+	}
+
+	verdict := "uphold"
+	if mech == "fail" || req.Semantic == "misquote" || req.Semantic == "out_of_context" || req.Semantic == "broken_link" {
+		verdict = "reject"
+	} else if req.Semantic == "weak" {
+		verdict = "reject" // weak counts as rejection of the citation as it stands
 	}
 
 	var reasoning *string
 	if req.Reasoning != "" {
 		reasoning = &req.Reasoning
 	}
-
-	// Check for existing review (update flow)
-	existing, err := s.store.GetReviewByReviewerAssertion(agentID, req.AssertionID)
-	if err == nil && existing != nil {
-		existing.Helpfulness = req.Helpfulness
-		existing.Reasoning = reasoning
-		if err := s.store.UpdateReview(existing); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to update review", nil)
-			return
-		}
-		writeData(w, http.StatusOK, map[string]any{"review": existing, "updated": true})
+	audit := &model.Audit{
+		ID:         db.GenerateID(),
+		CitationID: req.CitationID,
+		AuditorID:  agentID,
+		Mechanical: mech,
+		Semantic:   req.Semantic,
+		Verdict:    verdict,
+		Reasoning:  reasoning,
+	}
+	if err := s.store.CreateAudit(audit); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to persist audit", nil)
 		return
 	}
-
-	review := &model.Review{
-		ID:          generateID(),
-		ReviewerID:  agentID,
-		AssertionID: req.AssertionID,
-		Helpfulness: req.Helpfulness,
-		Reasoning:   reasoning,
+	if mech == "fail" {
+		s.store.UpdateCitationStatus(cit.ID, "rejected")
+		s.store.UpdateCitationAuditFactor(cit.ID, 0)
 	}
-	if err := s.store.CreateReview(review); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to create review", nil)
+	writeData(w, http.StatusCreated, map[string]any{"audit": audit})
+}
+
+func (s *Server) handleAuditQueue(w http.ResponseWriter, r *http.Request) {
+	agentID := getAgentID(r.Context())
+	limit := parseIntParam(r, "limit", 10)
+	minAudits := parseIntParam(r, "min_audits", 3)
+	citations, err := s.store.CitationsNeedingAudit(agentID, minAudits, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "queue failed", nil)
 		return
 	}
-	writeData(w, http.StatusCreated, map[string]any{"review": review})
+	writeData(w, http.StatusOK, citations)
+}
+
+func validSemantic(v string) bool {
+	switch v {
+	case "confirm", "misquote", "out_of_context", "weak", "broken_link":
+		return true
+	}
+	return false
 }
 
 // --- Dependencies ---
 
 func (s *Server) handleGetClaimDependencies(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	deps, err := s.store.ListDependenciesByClaim(id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list dependencies", nil)
-		return
-	}
-	dependents, err := s.store.ListDependents(id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list dependents", nil)
-		return
-	}
+	deps, _ := s.store.ListDependenciesByClaim(id)
+	dependents, _ := s.store.ListDependents(id)
 	writeData(w, http.StatusOK, map[string]any{
-		"depends_on": deps,
-		"depended_by": dependents,
+		"depends_on":   deps,
+		"depended_by":  dependents,
 	})
 }
 
 func (s *Server) handleCreateDependency(w http.ResponseWriter, r *http.Request) {
 	agentID := getAgentID(r.Context())
-
 	if !s.limiters.checkBurst(agentID) {
-		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many requests per second", nil)
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many requests", nil)
 		return
 	}
 
@@ -759,74 +717,236 @@ func (s *Server) handleCreateDependency(w http.ResponseWriter, r *http.Request) 
 		ClaimID     string  `json:"claim_id"`
 		DependsOnID string  `json:"depends_on_id"`
 		Strength    float64 `json:"strength"`
-		Reasoning   string  `json:"reasoning,omitempty"`
+		Reasoning   string  `json:"reasoning"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body", nil)
 		return
 	}
 	if req.ClaimID == "" || req.DependsOnID == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "claim_id and depends_on_id are required", nil)
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "claim_id and depends_on_id required", nil)
 		return
 	}
-	if req.Strength < 0 || req.Strength > 1 {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "strength must be between 0 and 1", nil)
-		return
-	}
-
-	// Cycle check
-	cycle, err := s.store.HasCycle(req.ClaimID, req.DependsOnID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to check for cycles", nil)
-		return
-	}
+	cycle, _ := s.store.HasCycle(req.ClaimID, req.DependsOnID)
 	if cycle {
-		writeError(w, http.StatusBadRequest, "CYCLE_DETECTED", "this dependency would create a cycle", nil)
+		writeError(w, http.StatusBadRequest, "CYCLE_DETECTED", "would create a cycle", nil)
 		return
 	}
-
-	var reasoning *string
-	if req.Reasoning != "" {
-		reasoning = &req.Reasoning
+	strength := req.Strength
+	if strength == 0 {
+		strength = 1.0
 	}
-
 	dep := &model.Dependency{
-		ID:          generateID(),
+		ID:          db.GenerateID(),
 		ClaimID:     req.ClaimID,
 		DependsOnID: req.DependsOnID,
-		Strength:    req.Strength,
-		Reasoning:   reasoning,
+		Strength:    strength,
+		Reasoning:   nullableString(req.Reasoning),
 	}
 	if err := s.store.CreateDependency(dep); err != nil {
-		// Check if this is a duplicate (UNIQUE constraint violation)
-		existing, lookupErr := s.store.GetDependencyByClaimPair(req.ClaimID, req.DependsOnID)
-		if lookupErr == nil && existing != nil {
+		// duplicate?
+		if existing, lookupErr := s.store.GetDependencyByClaimPair(req.ClaimID, req.DependsOnID); lookupErr == nil && existing != nil {
 			writeData(w, http.StatusOK, map[string]any{"dependency": existing})
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to create dependency", nil)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "create dep failed", nil)
 		return
 	}
+	_ = agentID
 	writeData(w, http.StatusCreated, map[string]any{"dependency": dep})
+}
+
+// --- Lenses ---
+
+func (s *Server) handleCreateLens(w http.ResponseWriter, r *http.Request) {
+	agentID := getAgentID(r.Context())
+	var req struct {
+		Slug         string  `json:"slug"`
+		Description  string  `json:"description"`
+		ParentLensID *string `json:"parent_lens_id,omitempty"`
+		Public       bool    `json:"public"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body", nil)
+		return
+	}
+	if req.Slug == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "slug is required", nil)
+		return
+	}
+	desc := req.Description
+	owner := agentID
+	l := &model.Lens{
+		ID:           db.GenerateID(),
+		Slug:         req.Slug,
+		OwnerID:      &owner,
+		ParentLensID: req.ParentLensID,
+		Description:  &desc,
+		Public:       req.Public,
+	}
+	if err := s.store.CreateLens(l); err != nil {
+		writeError(w, http.StatusBadRequest, "DUPLICATE_OR_INVALID", "could not create lens", nil)
+		return
+	}
+	writeData(w, http.StatusCreated, map[string]any{"lens": l})
+}
+
+func (s *Server) handleListLenses(w http.ResponseWriter, r *http.Request) {
+	lenses, err := s.store.ListLenses()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "list lenses failed", nil)
+		return
+	}
+	writeData(w, http.StatusOK, lenses)
+}
+
+func (s *Server) handleGetLens(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	l, err := s.store.GetLensBySlug(slug)
+	if err != nil || l == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "lens not found", nil)
+		return
+	}
+	overrides, _ := s.store.ListLensOverrides(l.ID)
+	tagOverrides, _ := s.store.ListLensTagOverrides(l.ID)
+	writeData(w, http.StatusOK, map[string]any{
+		"lens":          l,
+		"overrides":     overrides,
+		"tag_overrides": tagOverrides,
+	})
+}
+
+func (s *Server) handleSetLensOverrides(w http.ResponseWriter, r *http.Request) {
+	agentID := getAgentID(r.Context())
+	slug := r.PathValue("slug")
+	l, err := s.store.GetLensBySlug(slug)
+	if err != nil || l == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "lens not found", nil)
+		return
+	}
+	if l.OwnerID != nil && *l.OwnerID != agentID && getRole(r.Context()) != "admin" {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not lens owner", nil)
+		return
+	}
+	var req struct {
+		Overrides    []model.LensOverride    `json:"overrides"`
+		TagOverrides []model.LensTagOverride `json:"tag_overrides"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body", nil)
+		return
+	}
+	for _, o := range req.Overrides {
+		o.LensID = l.ID
+		s.store.UpsertLensOverride(&o)
+	}
+	for _, t := range req.TagOverrides {
+		t.LensID = l.ID
+		s.store.UpsertLensTagOverride(&t)
+	}
+	writeData(w, http.StatusOK, map[string]any{"updated": true})
+}
+
+func (s *Server) handleForkLens(w http.ResponseWriter, r *http.Request) {
+	agentID := getAgentID(r.Context())
+	slug := r.PathValue("slug")
+	parent, err := s.store.GetLensBySlug(slug)
+	if err != nil || parent == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "parent lens not found", nil)
+		return
+	}
+	var req struct {
+		NewSlug string `json:"slug"`
+		Desc    string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body", nil)
+		return
+	}
+	if req.NewSlug == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "slug required", nil)
+		return
+	}
+	owner := agentID
+	desc := req.Desc
+	child := &model.Lens{
+		ID:           db.GenerateID(),
+		Slug:         req.NewSlug,
+		OwnerID:      &owner,
+		ParentLensID: &parent.ID,
+		Description:  &desc,
+		Public:       parent.Public,
+	}
+	if err := s.store.CreateLens(child); err != nil {
+		writeError(w, http.StatusBadRequest, "DUPLICATE_OR_INVALID", "could not fork", nil)
+		return
+	}
+	// Copy overrides
+	overrides, _ := s.store.ListLensOverrides(parent.ID)
+	for _, o := range overrides {
+		o.LensID = child.ID
+		s.store.UpsertLensOverride(&o)
+	}
+	tagOverrides, _ := s.store.ListLensTagOverrides(parent.ID)
+	for _, t := range tagOverrides {
+		t.LensID = child.ID
+		s.store.UpsertLensTagOverride(&t)
+	}
+	writeData(w, http.StatusCreated, map[string]any{"lens": child})
 }
 
 // --- Discovery ---
 
-func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSourceLeaderboard(w http.ResponseWriter, r *http.Request) {
 	limit := parseIntParam(r, "limit", 25)
-	agents, err := s.store.TopAgentsByWeight(limit)
+	creds, err := s.store.LatestSourceCredibility()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to get leaderboard", nil)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "leaderboard failed", nil)
 		return
 	}
-	writeData(w, http.StatusOK, agents)
+
+	// Apply lens if requested.
+	if lensSlug := r.URL.Query().Get("lens"); lensSlug != "" {
+		if lensRow, _ := s.store.GetLensBySlug(lensSlug); lensRow != nil {
+			snap, err := lens.LoadSnapshot(s.store)
+			if err == nil {
+				spec, err := lens.LoadLensSpec(s.store, lensRow.ID)
+				if err == nil {
+					_ = spec
+					// Re-compute credibility view via snap. For now use baseline; full lens render of credibility is a Phase 7 follow-up.
+					_ = snap
+				}
+			}
+		}
+	}
+
+	type row struct {
+		SourceID    string  `json:"source_id"`
+		Credibility float64 `json:"credibility"`
+	}
+	var rows []row
+	for sid, v := range creds {
+		rows = append(rows, row{SourceID: sid, Credibility: v})
+	}
+	// Sort descending
+	for i := range rows {
+		for j := i + 1; j < len(rows); j++ {
+			if rows[j].Credibility > rows[i].Credibility {
+				rows[i], rows[j] = rows[j], rows[i]
+			}
+		}
+	}
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	writeData(w, http.StatusOK, rows)
 }
 
 func (s *Server) handleContested(w http.ResponseWriter, r *http.Request) {
 	limit := parseIntParam(r, "limit", 25)
 	claims, err := s.store.MostContestedClaims(limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to get contested claims", nil)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "contested failed", nil)
 		return
 	}
 	writeData(w, http.StatusOK, claims)
@@ -836,7 +956,7 @@ func (s *Server) handleFrontier(w http.ResponseWriter, r *http.Request) {
 	limit := parseIntParam(r, "limit", 25)
 	claims, err := s.store.FrontierClaims(limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to get frontier", nil)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "frontier failed", nil)
 		return
 	}
 	writeData(w, http.StatusOK, claims)
@@ -845,7 +965,7 @@ func (s *Server) handleFrontier(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListEpochs(w http.ResponseWriter, r *http.Request) {
 	epochs, err := s.store.ListEpochs()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list epochs", nil)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "list epochs failed", nil)
 		return
 	}
 	writeData(w, http.StatusOK, epochs)
@@ -854,14 +974,68 @@ func (s *Server) handleListEpochs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLatestEpoch(w http.ResponseWriter, r *http.Request) {
 	epoch, err := s.store.GetLatestEpoch()
 	if err != nil {
-		if err == sql.ErrNoRows {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "no epochs yet", nil)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to get latest epoch", nil)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "latest epoch failed", nil)
+		return
+	}
+	if epoch == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "no epochs yet", nil)
 		return
 	}
 	writeData(w, http.StatusOK, epoch)
+}
+
+// --- Graph ---
+
+func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
+	type node struct {
+		ID    string  `json:"id"`
+		Label string  `json:"label"`
+		Type  string  `json:"type"`
+		Value float64 `json:"value"`
+	}
+	type link struct {
+		Source   string  `json:"source"`
+		Target   string  `json:"target"`
+		Type     string  `json:"type"`
+		Polarity string  `json:"polarity,omitempty"`
+		Value    float64 `json:"value"`
+	}
+	var nodes []node
+	var links []link
+
+	claims, _ := s.store.ListAllClaims()
+	for _, c := range claims {
+		nodes = append(nodes, node{ID: "c:" + c.ID, Label: c.Proposition, Type: "claim", Value: c.EffectiveGroundedness})
+	}
+	srcs, _ := s.store.ListAllSources()
+	creds, _ := s.store.LatestSourceCredibility()
+	for _, src := range srcs {
+		title := src.URL
+		if src.Title != nil {
+			title = *src.Title
+		}
+		nodes = append(nodes, node{ID: "s:" + src.ID, Label: title, Type: "source", Value: creds[src.ID]})
+	}
+	citations, _ := s.store.ListAllCitations()
+	for _, ct := range citations {
+		links = append(links, link{
+			Source: "c:" + ct.ClaimID, Target: "s:" + ct.SourceID,
+			Type: "citation", Polarity: ct.Polarity, Value: ct.AuditFactor,
+		})
+	}
+	deps, _ := s.store.ListAllDependencies()
+	for _, d := range deps {
+		links = append(links, link{
+			Source: "c:" + d.ClaimID, Target: "c:" + d.DependsOnID, Type: "dependency", Value: d.Strength,
+		})
+	}
+	edges, _ := s.store.ListSourceCitationEdges()
+	for _, e := range edges {
+		links = append(links, link{
+			Source: "s:" + e.FromSourceID, Target: "s:" + e.ToSourceID, Type: "source_citation", Value: 1.0,
+		})
+	}
+	writeData(w, http.StatusOK, map[string]any{"nodes": nodes, "links": links})
 }
 
 // --- Admin ---
@@ -880,170 +1054,21 @@ func (s *Server) handleAdjudicate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "claim_id is required", nil)
 		return
 	}
-
-	agentID := getAgentID(r.Context())
-	if err := s.store.AdjudicateClaim(req.ClaimID, req.Value, agentID, req.Reasoning); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to adjudicate claim", nil)
+	citations, _ := s.store.ListCitationsByClaim(req.ClaimID)
+	if len(citations) == 0 {
+		writeError(w, http.StatusBadRequest, "REQUIRES_CITATIONS", "adjudicated claims require at least 1 citation", nil)
 		return
 	}
-
+	agentID := getAgentID(r.Context())
+	if err := s.store.AdjudicateClaim(req.ClaimID, req.Value, agentID, req.Reasoning); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "adjudicate failed", nil)
+		return
+	}
 	claim, _ := s.store.GetClaim(req.ClaimID)
 	writeData(w, http.StatusOK, map[string]any{"claim": claim})
 }
 
-func (s *Server) handleCascade(w http.ResponseWriter, r *http.Request) {
-	// Cascade analysis: find claims whose effective groundedness is threatened by
-	// low-groundedness dependencies
-	claims, err := s.store.ListAllClaims()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list claims", nil)
-		return
-	}
-
-	var threatened []map[string]any
-	for _, c := range claims {
-		if c.Status == "adjudicated" {
-			continue
-		}
-		deps, _ := s.store.ListDependenciesByClaim(c.ID)
-		for _, d := range deps {
-			dep, err := s.store.GetClaim(d.DependsOnID)
-			if err != nil {
-				continue
-			}
-			if dep.EffectiveGroundedness < 0.5 && d.Strength > 0.5 {
-				threatened = append(threatened, map[string]any{
-					"claim_id":              c.ID,
-					"proposition":           c.Proposition,
-					"dependency_id":         d.DependsOnID,
-					"dependency_groundedness": dep.EffectiveGroundedness,
-					"strength":              d.Strength,
-				})
-			}
-		}
-	}
-
-	writeData(w, http.StatusOK, map[string]any{"threatened_claims": threatened})
-}
-
-// --- Graph ---
-
-func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
-	type graphNode struct {
-		ID     string  `json:"id"`
-		Label  string  `json:"label"`
-		Type   string  `json:"type"`
-		Value  float64 `json:"value"`
-		Status string  `json:"status,omitempty"`
-		Stance string  `json:"stance,omitempty"`
-	}
-	type graphLink struct {
-		Source string  `json:"source"`
-		Target string  `json:"target"`
-		Type   string  `json:"type"`
-		Value  float64 `json:"value"`
-		Stance string  `json:"stance,omitempty"`
-	}
-
-	var nodes []graphNode
-	var links []graphLink
-
-	// Topics
-	topics, _ := s.store.ListTopics()
-	topicEmbeddings := make(map[string][]float32)
-	for _, t := range topics {
-		nodes = append(nodes, graphNode{
-			ID:    "t:" + t.ID,
-			Label: t.Title,
-			Type:  "topic",
-			Value: 1.0,
-		})
-		if len(t.Embedding) > 0 {
-			topicEmbeddings[t.ID] = embed.UnmarshalVector(t.Embedding)
-		}
-	}
-
-	// Claims
-	claims, _ := s.store.ListAllClaims()
-	for _, c := range claims {
-		nodes = append(nodes, graphNode{
-			ID:     "c:" + c.ID,
-			Label:  c.Proposition,
-			Type:   "claim",
-			Value:  c.EffectiveGroundedness,
-			Status: c.Status,
-		})
-
-		// Link claim to nearest topic
-		if len(c.Embedding) > 0 {
-			claimVec := embed.UnmarshalVector(c.Embedding)
-			if len(claimVec) > 0 {
-				var bestID string
-				var bestSim float64
-				for tID, tVec := range topicEmbeddings {
-					sim := embed.CosineSimilarity(claimVec, tVec)
-					if sim > bestSim {
-						bestSim = sim
-						bestID = tID
-					}
-				}
-				if bestSim > 0.3 && bestID != "" {
-					links = append(links, graphLink{
-						Source: "c:" + c.ID,
-						Target: "t:" + bestID,
-						Type:   "proximity",
-						Value:  bestSim,
-					})
-				}
-			}
-		}
-	}
-
-	// Agents
-	agents, _ := s.store.ListAgents()
-	for _, a := range agents {
-		nodes = append(nodes, graphNode{
-			ID:    "a:" + a.ID,
-			Label: a.Name,
-			Type:  "agent",
-			Value: a.Weight,
-		})
-	}
-
-	// Dependencies
-	deps, _ := s.store.ListAllDependencies()
-	for _, d := range deps {
-		links = append(links, graphLink{
-			Source: "c:" + d.ClaimID,
-			Target: "c:" + d.DependsOnID,
-			Type:   "dependency",
-			Value:  d.Strength,
-		})
-	}
-
-	// Assertions
-	assertions, _ := s.store.ListAllAssertions()
-	for _, a := range assertions {
-		links = append(links, graphLink{
-			Source: "a:" + a.AgentID,
-			Target: "c:" + a.ClaimID,
-			Type:   "assertion",
-			Value:  a.Confidence,
-			Stance: a.Stance,
-		})
-	}
-
-	writeData(w, http.StatusOK, map[string]any{
-		"nodes": nodes,
-		"links": links,
-	})
-}
-
 // --- Helpers ---
-
-func generateID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
-}
 
 func slugify(s string) string {
 	s = strings.ToLower(s)
@@ -1056,9 +1081,23 @@ func slugify(s string) string {
 		}
 		return -1
 	}, s)
-	// Collapse multiple dashes
 	for strings.Contains(s, "--") {
 		s = strings.ReplaceAll(s, "--", "-")
 	}
 	return strings.Trim(s, "-")
 }
+
+func nullableString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// generateID is kept for tests/IssueToken; prefer db.GenerateID.
+func generateID() string {
+	return db.GenerateID()
+}
+
+// IssueTokenAt is a wrapper retained for back-compat shape.
+var _ = time.Now

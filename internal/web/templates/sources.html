@@ -1,0 +1,27 @@
+{{define "title"}}Sources{{end}}
+{{define "content"}}
+<h1>Sources</h1>
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>URL</th>
+            <th>Type</th>
+            <th>Credibility</th>
+            <th>Fetched</th>
+        </tr>
+    </thead>
+    <tbody>
+    {{range .Sources}}
+        {{$cred := index $.Credibility .ID}}
+        <tr>
+            <td><a href="/source/{{.ID}}">{{truncate .URL 80}}</a></td>
+            <td>{{.Type}}</td>
+            <td>{{if $cred}}{{pctf $cred}}%{{else}}--{{end}}</td>
+            <td>{{timeAgo .FetchedAt}}</td>
+        </tr>
+    {{else}}
+        <tr><td colspan="4"><em>No sources yet.</em></td></tr>
+    {{end}}
+    </tbody>
+</table>
+{{end}}

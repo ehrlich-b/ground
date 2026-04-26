@@ -1,0 +1,31 @@
+{{define "title"}}Source{{end}}
+{{define "content"}}
+<h1>Source</h1>
+<p><a href="{{.Source.URL}}" target="_blank">{{.Source.URL}}</a></p>
+<p><strong>Type:</strong> {{.Source.Type}} &middot; <strong>Fetched:</strong> {{timeAgo .Source.FetchedAt}}</p>
+<p><strong>Credibility:</strong> {{pctf .Credibility}}%</p>
+<p><strong>Tags:</strong>
+{{range .Tags}}<span class="tag">{{.}}</span>{{end}}
+</p>
+
+{{if .Anchor}}
+<div class="anchor-info">
+    <strong>Anchored</strong> &mdash; tier {{.Anchor.Tier}}, prior {{pctf .Anchor.Credibility}}%
+    {{if .Anchor.Reasoning}}<p>{{deref .Anchor.Reasoning}}</p>{{end}}
+</div>
+{{end}}
+
+<p><a href="/api/sources/{{.Source.ID}}/body">View cached body</a></p>
+
+<h2>Citations of this source</h2>
+<ul class="citation-list">
+{{range .Citations}}
+    <li>
+        [{{.Polarity}}] on <a href="/claim/{{.ClaimID}}">claim {{.ClaimID}}</a>
+        &mdash; &ldquo;{{truncate .VerbatimQuote 100}}&rdquo;
+    </li>
+{{else}}
+    <li><em>No citations of this source yet.</em></li>
+{{end}}
+</ul>
+{{end}}

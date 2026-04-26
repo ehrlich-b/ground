@@ -1,279 +1,52 @@
 {{define "title"}}Claim{{end}}
-
 {{define "content"}}
-<div class="detail-header">
-    <h1 style="font-size: 1.5rem; line-height: 1.5;">{{.Claim.Proposition}}</h1>
-    <div class="detail-meta">
-        <div class="meta-item">
-            <span class="meta-label">id:</span>
-            <span class="meta-value"><code>{{.Claim.ID}}</code></span>
-        </div>
-        <div class="meta-item">
-            <span class="badge badge-{{statusClass .Claim.Status}}">{{.Claim.Status}}</span>
-        </div>
-        <div class="meta-item">
-            <span class="meta-label">created:</span>
-            <span class="meta-value">{{.Claim.CreatedAt.Format "2006-01-02"}}</span>
-        </div>
-        {{if .Claim.ParentClaimID}}
-        <div class="meta-item">
-            <span class="meta-label">refined from:</span>
-            <span class="meta-value"><a href="/claim/{{deref .Claim.ParentClaimID}}"><code>{{deref .Claim.ParentClaimID}}</code></a></span>
-        </div>
-        {{end}}
-    </div>
-</div>
+<h1>{{.Claim.Proposition}}</h1>
+<p>
+    <span class="badge {{statusClass .Claim.Status}}">{{.Claim.Status}}</span>
+    g: {{pctf .Claim.Groundedness}}% &middot;
+    effective: {{pctf .Claim.EffectiveGroundedness}}% &middot;
+    contestation: {{pctf .Claim.Contestation}}%
+</p>
 
-<div class="groundedness-display">
-    <div class="groundedness-item">
-        <div class="g-label">Intrinsic Groundedness</div>
-        <div class="g-value" style="color: {{colorForValue .Claim.Groundedness}};">{{pctf .Claim.Groundedness}}%</div>
-        <div class="g-bar">
-            <div class="g-bar-fill bar-fill {{barClass .Claim.Groundedness}}" style="width: {{pct .Claim.Groundedness}}%"></div>
-        </div>
-    </div>
-    <div class="groundedness-item">
-        <div class="g-label">Effective Groundedness</div>
-        <div class="g-value" style="color: {{colorForValue .Claim.EffectiveGroundedness}};">{{pctf .Claim.EffectiveGroundedness}}%</div>
-        <div class="g-bar">
-            <div class="g-bar-fill bar-fill {{barClass .Claim.EffectiveGroundedness}}" style="width: {{pct .Claim.EffectiveGroundedness}}%"></div>
-        </div>
-    </div>
-    <div class="groundedness-item">
-        <div class="g-label">Contestation</div>
-        <div class="g-value" style="color: {{colorForValue .Claim.Contestation}};">{{pctf .Claim.Contestation}}%</div>
-        <div class="g-bar">
-            <div class="g-bar-fill bar-fill {{barClass .Claim.Contestation}}" style="width: {{pct .Claim.Contestation}}%"></div>
-        </div>
-    </div>
-</div>
-
-{{if .Dependencies}}
-<div class="section">
-    <div class="section-header">
-        <h2>Truthiness Explorer</h2>
-    </div>
-    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
-        Toggle dependencies on/off or adjust their groundedness to see how effective groundedness changes.
-    </p>
-
-    <div id="explorer" style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border);">
-            <div>
-                <span style="font-family: var(--mono); font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em;">Simulated Effective Groundedness</span>
-                <div id="sim-value" style="font-family: var(--mono); font-size: 2rem; font-weight: 700; color: var(--accent);"></div>
-            </div>
-            <div style="text-align: right;">
-                <span style="font-family: var(--mono); font-size: 0.75rem; color: var(--text-muted);">actual: {{pctf .Claim.EffectiveGroundedness}}%</span><br>
-                <span id="sim-delta" style="font-family: var(--mono); font-size: 0.85rem;"></span>
-            </div>
-        </div>
-        <div id="sim-bar" style="height: 8px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden; margin-bottom: 1.25rem;">
-            <div id="sim-bar-fill" style="height: 100%; border-radius: 4px; transition: width 0.2s, background 0.2s;"></div>
-        </div>
-
-        <div id="dep-tree"></div>
-    </div>
-
-    <script>
-    (function() {
-        const tree = {{.TreeJSON}};
-        const intrinsic = tree.groundedness;
-        const actualEffective = tree.effective_groundedness;
-
-        function renderTree(node, container, depth) {
-            if (!node.dependencies || node.dependencies.length === 0) return;
-
-            node.dependencies.forEach((dep, i) => {
-                const depNode = dep.node;
-                const itemId = 'dep-' + depth + '-' + i;
-
-                const item = document.createElement('div');
-                item.style.cssText = 'padding: 0.6rem 0; border-bottom: 1px solid var(--border); margin-left: ' + (depth * 1.25) + 'rem;';
-                item.innerHTML = `
-                    <div style="display: flex; align-items: center; gap: 0.75rem;">
-                        <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
-                            <input type="checkbox" checked data-dep-id="${itemId}" style="accent-color: var(--accent);">
-                            <span style="font-family: var(--mono); font-size: 0.8rem; color: var(--text-muted);">${(dep.strength * 100).toFixed(0)}%</span>
-                        </label>
-                        <a href="/claim/${depNode.id}" style="font-size: 0.9rem; flex: 1;">${escapeHtml(depNode.proposition.length > 100 ? depNode.proposition.slice(0, 97) + '...' : depNode.proposition)}</a>
-                        <span class="badge badge-${depNode.status}" style="flex-shrink: 0;">${depNode.status}</span>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 0.75rem; margin-top: 0.4rem; margin-left: 1.5rem;">
-                        <span style="font-family: var(--mono); font-size: 0.75rem; color: var(--text-muted); min-width: 2rem;">G:</span>
-                        <input type="range" min="0" max="100" value="${(depNode.effective_groundedness * 100).toFixed(0)}"
-                               data-dep-id="${itemId}" data-original="${depNode.effective_groundedness}"
-                               style="flex: 1; accent-color: var(--accent); max-width: 200px;">
-                        <span id="slider-val-${itemId}" style="font-family: var(--mono); font-size: 0.8rem; color: var(--text); min-width: 3rem;">${(depNode.effective_groundedness * 100).toFixed(1)}%</span>
-                        <button data-dep-id="${itemId}" class="reset-btn" style="font-family: var(--mono); font-size: 0.7rem; color: var(--text-muted); background: none; border: 1px solid var(--border); border-radius: 3px; padding: 0.15em 0.4em; cursor: pointer; opacity: 0;">reset</button>
-                    </div>
-                `;
-                container.appendChild(item);
-
-                // Recurse for sub-dependencies
-                if (depNode.dependencies && depNode.dependencies.length > 0) {
-                    renderTree(depNode, container, depth + 1);
-                }
-            });
-        }
-
-        const treeContainer = document.getElementById('dep-tree');
-        renderTree(tree, treeContainer, 0);
-
-        // Store dep data for computation
-        const depData = {};
-        function collectDeps(node, depth, index) {
-            if (!node.dependencies) return;
-            node.dependencies.forEach((dep, i) => {
-                const itemId = 'dep-' + depth + '-' + i;
-                depData[itemId] = {
-                    strength: dep.strength,
-                    originalG: dep.node.effective_groundedness,
-                    currentG: dep.node.effective_groundedness,
-                    enabled: true,
-                    subDeps: []
-                };
-                if (dep.node.dependencies) {
-                    dep.node.dependencies.forEach((sd, si) => {
-                        depData[itemId].subDeps.push('dep-' + (depth+1) + '-' + si);
-                    });
-                }
-                collectDeps(dep.node, depth + 1, i);
-            });
-        }
-        collectDeps(tree, 0, 0);
-
-        // Recompute on any change
-        function recompute() {
-            // Compute effective groundedness: intrinsic * product(1 - strength * (1 - depG)) for enabled deps
-            let product = 1.0;
-            // Only use top-level deps for this claim
-            if (tree.dependencies) {
-                tree.dependencies.forEach((dep, i) => {
-                    const itemId = 'dep-0-' + i;
-                    const d = depData[itemId];
-                    if (d && d.enabled) {
-                        product *= (1 - d.strength * (1 - d.currentG));
-                    }
-                });
-            }
-            const simulated = intrinsic * product;
-            const delta = simulated - actualEffective;
-
-            const simEl = document.getElementById('sim-value');
-            const deltaEl = document.getElementById('sim-delta');
-            const barFill = document.getElementById('sim-bar-fill');
-
-            simEl.textContent = (simulated * 100).toFixed(1) + '%';
-            simEl.style.color = simulated >= 0.7 ? 'var(--accent)' : simulated >= 0.4 ? 'var(--yellow)' : 'var(--red)';
-
-            if (Math.abs(delta) < 0.001) {
-                deltaEl.textContent = 'no change';
-                deltaEl.style.color = 'var(--text-muted)';
-            } else {
-                const sign = delta > 0 ? '+' : '';
-                deltaEl.textContent = sign + (delta * 100).toFixed(1) + '% from actual';
-                deltaEl.style.color = delta > 0 ? 'var(--accent)' : 'var(--red)';
-            }
-
-            barFill.style.width = (simulated * 100) + '%';
-            barFill.style.background = simulated >= 0.7 ? 'var(--accent)' : simulated >= 0.4 ? 'var(--yellow)' : 'var(--red)';
-        }
-
-        // Event listeners
-        treeContainer.addEventListener('change', (e) => {
-            if (e.target.type === 'checkbox') {
-                const itemId = e.target.dataset.depId;
-                if (depData[itemId]) {
-                    depData[itemId].enabled = e.target.checked;
-                    recompute();
-                }
-            }
-        });
-
-        treeContainer.addEventListener('input', (e) => {
-            if (e.target.type === 'range') {
-                const itemId = e.target.dataset.depId;
-                const val = parseInt(e.target.value) / 100;
-                if (depData[itemId]) {
-                    depData[itemId].currentG = val;
-                    document.getElementById('slider-val-' + itemId).textContent = (val * 100).toFixed(1) + '%';
-                    // Show/hide reset button
-                    const resetBtn = treeContainer.querySelector('.reset-btn[data-dep-id="' + itemId + '"]');
-                    if (resetBtn) {
-                        resetBtn.style.opacity = Math.abs(val - depData[itemId].originalG) > 0.005 ? '1' : '0';
-                    }
-                    recompute();
-                }
-            }
-        });
-
-        treeContainer.addEventListener('click', (e) => {
-            if (e.target.classList.contains('reset-btn')) {
-                const itemId = e.target.dataset.depId;
-                if (depData[itemId]) {
-                    depData[itemId].currentG = depData[itemId].originalG;
-                    const slider = treeContainer.querySelector('input[type="range"][data-dep-id="' + itemId + '"]');
-                    if (slider) slider.value = (depData[itemId].originalG * 100).toFixed(0);
-                    document.getElementById('slider-val-' + itemId).textContent = (depData[itemId].originalG * 100).toFixed(1) + '%';
-                    e.target.style.opacity = '0';
-                    recompute();
-                }
-            }
-        });
-
-        function escapeHtml(s) {
-            const div = document.createElement('div');
-            div.textContent = s;
-            return div.innerHTML;
-        }
-
-        // Initial computation
-        recompute();
-    })();
-    </script>
+{{if .LensSlug}}
+<div class="lens-banner">
+    Viewing under lens <strong>{{.LensSlug}}</strong>:
+    g: {{pctf .LensScore.Groundedness}}% &middot;
+    effective: {{pctf .LensScore.EffectiveGroundedness}}% &middot;
+    contestation: {{pctf .LensScore.Contestation}}%
 </div>
 {{end}}
 
-{{if .Dependents}}
-<div class="section">
-    <div class="section-header">
-        <h2>Depended On By</h2>
-    </div>
-    <ul class="dep-list">
-        {{range .Dependents}}
-        <li class="dep-item">
-            <span class="dep-strength">{{printf "%.0f" (mul .Strength 100)}}%</span>
-            <span class="dep-prop"><a href="/claim/{{.ClaimID}}">{{if .DepProp}}{{truncate .DepProp 120}}{{else}}{{.ClaimID}}{{end}}</a></span>
-        </li>
-        {{end}}
-    </ul>
-</div>
+<h2>Citations</h2>
+<ul class="citation-list">
+{{range .Citations}}
+    <li>
+        <strong>[{{.Polarity}}]</strong>
+        &ldquo;{{.VerbatimQuote}}&rdquo;
+        <a href="/source/{{.SourceID}}">[source]</a>
+        <span>audit factor: {{pctf .AuditFactor}}%</span>
+        {{if .Reasoning}}<p><em>{{deref .Reasoning}}</em></p>{{end}}
+    </li>
+{{else}}
+    <li><em>No citations.</em></li>
 {{end}}
+</ul>
 
-{{if .Assertions}}
-<div class="section">
-    <div class="section-header">
-        <h2>Assertions ({{len .Assertions}})</h2>
-    </div>
-    {{range .Assertions}}
-    <div class="assertion">
-        <div class="assertion-header">
-            <div>
-                <span class="badge badge-{{.Stance}}">{{.Stance}}</span>
-                <a href="/agent/{{.AgentID}}" class="assertion-agent" style="margin-left: 0.5rem;">{{.AgentName}}</a>
-            </div>
-            <span class="assertion-confidence">confidence: {{pctf .Confidence}}%</span>
-        </div>
-        {{if .Reasoning}}<div class="assertion-reasoning">{{derefStr .Reasoning}}</div>{{end}}
-        <div class="assertion-footer">
-            <span>helpfulness: {{pctf .Helpfulness}}%</span>
-            {{if .RefinementClaimID}}
-            <span><a href="/claim/{{derefStr .RefinementClaimID}}">refined claim &rarr;</a></span>
-            {{end}}
-        </div>
-    </div>
-    {{end}}
-</div>
+<h2>Depends on</h2>
+<ul>
+{{range .Dependencies}}
+    <li><a href="/claim/{{.DependsOnID}}">{{.DependsOnID}}</a> (strength {{pctf .Strength}}%)</li>
+{{else}}
+    <li><em>No dependencies.</em></li>
 {{end}}
+</ul>
+
+<h2>Depended by</h2>
+<ul>
+{{range .Dependents}}
+    <li><a href="/claim/{{.ClaimID}}">{{.ClaimID}}</a> (strength {{pctf .Strength}}%)</li>
+{{else}}
+    <li><em>Nothing depends on this.</em></li>
+{{end}}
+</ul>
 {{end}}

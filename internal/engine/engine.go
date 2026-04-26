@@ -1,509 +1,416 @@
+// Package engine runs the per-epoch baseline computation:
+//
+//   - source credibility from anchors + source-source citation graph + audit aggregates
+//   - agent reliability from audit verdicts (uphold vs reject), with mechanical-fail = hard reject
+//   - claim intrinsic groundedness (linear in source credibility)
+//   - effective groundedness in topological order over the dependency DAG
+//
+// All three iterations are bounded EigenTrust-style power iterations damped toward priors.
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
 	"time"
 
 	"github.com/ehrlich-b/ground/internal/db"
+	"github.com/ehrlich-b/ground/internal/lens"
 	"github.com/ehrlich-b/ground/internal/model"
 )
 
-// Config holds the tunable parameters for the EigenTrust computation.
+// Config holds tunable weights for one epoch.
 type Config struct {
-	MaxIterations      int
-	Epsilon            float64 // convergence threshold
-	DampingFactor      float64 // d in accuracy/contribution smoothing
-	Prior              float64 // default accuracy/contribution
-	Alpha              float64 // contest scaling factor in groundedness
-	RefineWeight       float64 // partial support from refine assertions
-	GroundedThreshold  float64 // minimum groundedness for "grounded" status
-	RefutedThreshold   float64 // below this = "refuted"
-	ContestedThreshold float64 // above this contestation = "contested"
+	SourceMaxIter   int
+	SourceTolerance float64
+	SourceDamping   float64
+	SourceWAnchor   float64
+	SourceWGraph    float64
+	SourceWAudit    float64
+
+	AgentMaxIter   int
+	AgentTolerance float64
+	AgentDamping   float64
+	AgentPrior     float64
+
+	GroundedThreshold float64
+	RefutedThreshold  float64
+	ContestedThresh   float64
 }
 
 func DefaultConfig() Config {
 	return Config{
-		MaxIterations:      100,
-		Epsilon:            0.001,
-		DampingFactor:      0.85,
-		Prior:              1.0,
-		Alpha:              1.0,
-		RefineWeight:       0.3,
-		GroundedThreshold:  0.8,
-		RefutedThreshold:   0.2,
-		ContestedThreshold: 0.3,
+		SourceMaxIter:     50,
+		SourceTolerance:   1e-4,
+		SourceDamping:     0.15,
+		SourceWAnchor:     0.5,
+		SourceWGraph:      0.3,
+		SourceWAudit:      0.2,
+		AgentMaxIter:      50,
+		AgentTolerance:    1e-4,
+		AgentDamping:      0.15,
+		AgentPrior:        0.5,
+		GroundedThreshold: 0.7,
+		RefutedThreshold:  0.3,
+		ContestedThresh:   0.5,
 	}
 }
 
-// EpochResult contains the output of a single epoch computation.
+// EpochResult is what RunEpoch returns to callers.
 type EpochResult struct {
-	EpochID                int
-	AccuracyIterations     int
-	ContributionIterations int
-	AccuracyDelta          float64
-	ContributionDelta      float64
+	EpochID          int
+	SourceIterations int
+	AgentIterations  int
+	SourceDelta      float64
+	AgentDelta       float64
 }
 
-// RunEpoch executes one full dual EigenTrust epoch.
+// RunEpoch runs one full v2 epoch and persists results.
 func RunEpoch(store *db.Store, cfg Config) (*EpochResult, error) {
 	epoch, err := store.CreateEpoch()
 	if err != nil {
 		return nil, fmt.Errorf("create epoch: %w", err)
 	}
 
-	// Load all data
-	agents, err := store.ListAgents()
+	srcCreds, srcIter, srcDelta, err := computeSourceCredibility(store, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("load agents: %w", err)
+		return nil, fmt.Errorf("source credibility: %w", err)
 	}
-	claims, err := store.ListAllClaims()
-	if err != nil {
-		return nil, fmt.Errorf("load claims: %w", err)
-	}
-	assertions, err := store.ListAllAssertions()
-	if err != nil {
-		return nil, fmt.Errorf("load assertions: %w", err)
-	}
-	reviews, err := store.ListAllReviews()
-	if err != nil {
-		return nil, fmt.Errorf("load reviews: %w", err)
-	}
-	allDeps, err := store.ListAllDependencies()
-	if err != nil {
-		return nil, fmt.Errorf("load dependencies: %w", err)
-	}
-
-	// Build indexes
-	agentMap := make(map[string]*agentState)
-	for i := range agents {
-		agentMap[agents[i].ID] = &agentState{
-			agent:        &agents[i],
-			accuracy:     agents[i].Accuracy,
-			contribution: agents[i].Contribution,
-			weight:       agents[i].Weight,
+	for sid, val := range srcCreds {
+		comps, _ := json.Marshal(map[string]float64{"value": val})
+		s := string(comps)
+		if err := store.UpsertSourceCredibility(&model.SourceCredibility{
+			SourceID:   sid,
+			EpochID:    epoch.ID,
+			Value:      val,
+			Components: &s,
+		}); err != nil {
+			return nil, fmt.Errorf("save source credibility: %w", err)
 		}
 	}
+	log.Printf("source credibility: %d sources, %d iterations, delta=%.6f", len(srcCreds), srcIter, srcDelta)
 
-	claimMap := make(map[string]*claimState)
-	for i := range claims {
-		cs := &claimState{
-			claim:                  &claims[i],
-			groundedness:           claims[i].Groundedness,
-			effectiveGroundedness:  claims[i].EffectiveGroundedness,
+	if err := refreshCitationAuditFactors(store); err != nil {
+		return nil, fmt.Errorf("audit factor: %w", err)
+	}
+
+	relMap, agentIter, agentDelta, err := computeAgentReliability(store, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("agent reliability: %w", err)
+	}
+	for aid, rel := range relMap {
+		productivity := computeProductivity(store, aid)
+		if err := store.UpdateAgentScores(aid, rel, productivity); err != nil {
+			return nil, fmt.Errorf("save agent scores: %w", err)
 		}
-		if claims[i].Status == "adjudicated" && claims[i].AdjudicatedValue != nil {
-			cs.groundedness = *claims[i].AdjudicatedValue
-			cs.effectiveGroundedness = *claims[i].AdjudicatedValue
-			cs.adjudicated = true
-		}
-		claimMap[claims[i].ID] = cs
 	}
+	log.Printf("agent reliability: %d agents, %d iterations, delta=%.6f", len(relMap), agentIter, agentDelta)
 
-	// Assertions indexed by claim and by agent
-	assertionsByClaim := make(map[string][]model.Assertion)
-	assertionsByAgent := make(map[string][]model.Assertion)
-	assertionMap := make(map[string]*model.Assertion)
-	for i := range assertions {
-		a := assertions[i]
-		assertionsByClaim[a.ClaimID] = append(assertionsByClaim[a.ClaimID], a)
-		assertionsByAgent[a.AgentID] = append(assertionsByAgent[a.AgentID], a)
-		assertionMap[a.ID] = &assertions[i]
+	snap, err := lens.LoadSnapshot(store)
+	if err != nil {
+		return nil, fmt.Errorf("load snapshot: %w", err)
 	}
-
-	// Reviews indexed by assertion and by reviewer
-	reviewsByAssertion := make(map[string][]model.Review)
-	reviewsByReviewer := make(map[string][]model.Review)
-	for i := range reviews {
-		r := reviews[i]
-		reviewsByAssertion[r.AssertionID] = append(reviewsByAssertion[r.AssertionID], r)
-		reviewsByReviewer[r.ReviewerID] = append(reviewsByReviewer[r.ReviewerID], r)
-	}
-
-	// Dependencies indexed by claim
-	depsByClaim := make(map[string][]model.Dependency)
-	for _, d := range allDeps {
-		depsByClaim[d.ClaimID] = append(depsByClaim[d.ClaimID], d)
-	}
-
-	// Topological order for dependency DAG
-	topoOrder := topologicalSort(claims, depsByClaim)
-
-	// Helpfulness state
-	helpfulness := make(map[string]float64) // assertion ID -> helpfulness
-
-	// --- Run Contribution Graph ---
-	contIter, contDelta := runContributionGraph(cfg, agentMap, helpfulness, reviewsByAssertion, reviewsByReviewer, assertionMap)
-	log.Printf("contribution graph: %d iterations, delta=%.6f", contIter, contDelta)
-
-	// --- Run Accuracy Graph (outer loop) ---
-	accIter, accDelta := runAccuracyGraph(cfg, agentMap, claimMap, assertionsByClaim, assertionsByAgent, depsByClaim, topoOrder)
-	log.Printf("accuracy graph: %d iterations, delta=%.6f", accIter, accDelta)
-
-	// Final weight computation
-	for _, as := range agentMap {
-		as.weight = as.contribution * (1 + as.accuracy)
-	}
-
-	// Compute contestation and status for each claim
-	for _, cs := range claimMap {
-		if cs.adjudicated {
-			cs.status = "adjudicated"
-			continue
-		}
-		cs.contestation = computeContestation(assertionsByClaim[cs.claim.ID], agentMap)
-		cs.status = computeStatus(cs.groundedness, cs.effectiveGroundedness, cs.contestation, cfg)
-	}
-
-	// Persist results
+	scores := lens.Render(snap, &lens.LensSpec{})
 	now := time.Now().UTC()
-	for _, as := range agentMap {
-		if err := store.UpdateAgentScores(as.agent.ID, as.accuracy, as.contribution, as.weight); err != nil {
-			return nil, fmt.Errorf("update agent %s: %w", as.agent.ID, err)
+	for cid, s := range scores {
+		status := classifyStatus(s, cfg)
+		if isAdjudicated(snap, cid) {
+			status = "adjudicated"
 		}
-	}
-	for _, cs := range claimMap {
-		if err := store.UpdateClaimScores(cs.claim.ID, cs.groundedness, cs.effectiveGroundedness, cs.contestation, cs.status, now); err != nil {
-			return nil, fmt.Errorf("update claim %s: %w", cs.claim.ID, err)
-		}
-	}
-	for id, h := range helpfulness {
-		if err := store.UpdateAssertionHelpfulness(id, h); err != nil {
-			return nil, fmt.Errorf("update helpfulness %s: %w", id, err)
+		if err := store.UpdateClaimScores(cid, s.Groundedness, s.EffectiveGroundedness, s.Contestation, status, now); err != nil {
+			return nil, fmt.Errorf("update claim %s: %w", cid, err)
 		}
 	}
 
-	if err := store.CompleteEpoch(epoch.ID, accIter, contIter, accDelta, contDelta); err != nil {
+	if err := store.CompleteEpoch(epoch.ID, srcIter, agentIter, srcDelta, agentDelta); err != nil {
 		return nil, fmt.Errorf("complete epoch: %w", err)
 	}
 
 	return &EpochResult{
-		EpochID:                epoch.ID,
-		AccuracyIterations:     accIter,
-		ContributionIterations: contIter,
-		AccuracyDelta:          accDelta,
-		ContributionDelta:      contDelta,
+		EpochID:          epoch.ID,
+		SourceIterations: srcIter,
+		AgentIterations:  agentIter,
+		SourceDelta:      srcDelta,
+		AgentDelta:       agentDelta,
 	}, nil
 }
 
-// --- Internal state ---
+func computeSourceCredibility(store *db.Store, cfg Config) (map[string]float64, int, float64, error) {
+	srcs, err := store.ListAllSources()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	if len(srcs) == 0 {
+		return map[string]float64{}, 0, 0, nil
+	}
 
-type agentState struct {
-	agent        *model.Agent
-	accuracy     float64
-	contribution float64
-	weight       float64
-}
+	anchors, err := store.ListSourceAnchors()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	anchorMap := map[string]float64{}
+	for _, a := range anchors {
+		anchorMap[a.SourceID] = a.Credibility
+	}
 
-type claimState struct {
-	claim                 *model.Claim
-	groundedness          float64
-	effectiveGroundedness float64
-	contestation          float64
-	status                string
-	adjudicated           bool
-}
+	edges, err := store.ListSourceCitationEdges()
+	if err != nil {
+		return nil, 0, 0, err
+	}
 
-// --- Accuracy Graph ---
+	citations, err := store.ListAllCitations()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	auditAgg := map[string][]float64{}
+	for _, c := range citations {
+		auditAgg[c.SourceID] = append(auditAgg[c.SourceID], c.AuditFactor)
+	}
+	auditByID := map[string]float64{}
+	for sid, factors := range auditAgg {
+		var sum float64
+		for _, f := range factors {
+			sum += f
+		}
+		auditByID[sid] = sum / float64(len(factors))
+	}
 
-func runAccuracyGraph(
-	cfg Config,
-	agentMap map[string]*agentState,
-	claimMap map[string]*claimState,
-	assertionsByClaim map[string][]model.Assertion,
-	assertionsByAgent map[string][]model.Assertion,
-	depsByClaim map[string][]model.Dependency,
-	topoOrder []string,
-) (int, float64) {
+	prev := map[string]float64{}
+	for _, s := range srcs {
+		if v, ok := anchorMap[s.ID]; ok {
+			prev[s.ID] = v
+		} else {
+			prev[s.ID] = 0.5
+		}
+	}
+
 	var iter int
 	var delta float64
-
-	for iter = 0; iter < cfg.MaxIterations; iter++ {
-		delta = 0
-
-		// Step 1: Intrinsic groundedness from weight-adjusted assertions
-		for claimID, cs := range claimMap {
-			if cs.adjudicated {
-				continue
+	for iter = 0; iter < cfg.SourceMaxIter; iter++ {
+		next := map[string]float64{}
+		for _, s := range srcs {
+			anchor, hasAnchor := anchorMap[s.ID]
+			if !hasAnchor {
+				anchor = 0.5
 			}
-			assertions := assertionsByClaim[claimID]
-			var support, partial, contest float64
-			for _, a := range assertions {
-				as := agentMap[a.AgentID]
-				if as == nil {
-					continue
-				}
-				switch a.Stance {
-				case "support":
-					support += a.Confidence * as.weight
-				case "refine":
-					partial += cfg.RefineWeight * a.Confidence * as.weight
-				case "contest":
-					contest += a.Confidence * as.weight
+			audit := auditByID[s.ID]
+
+			var inSum, inCount float64
+			for _, e := range edges {
+				if e.ToSourceID == s.ID {
+					inSum += prev[e.FromSourceID]
+					inCount++
 				}
 			}
-			denom := support + partial + cfg.Alpha*contest + cfg.Epsilon
-			raw := (support + partial - cfg.Alpha*contest) / denom
-			newG := clamp(raw, 0, 1)
-			delta = math.Max(delta, math.Abs(newG-cs.groundedness))
-			cs.groundedness = newG
+			graph := 0.5
+			if inCount > 0 {
+				graph = inSum / inCount
+			}
+
+			combined := cfg.SourceWAnchor*anchor + cfg.SourceWGraph*graph + cfg.SourceWAudit*audit
+			combined = (1-cfg.SourceDamping)*combined + cfg.SourceDamping*anchor
+			if combined < 0 {
+				combined = 0
+			}
+			if combined > 1 {
+				combined = 1
+			}
+			next[s.ID] = combined
 		}
 
-		// Step 2: Effective groundedness via dependency DAG (topological order)
-		for _, claimID := range topoOrder {
-			cs := claimMap[claimID]
-			if cs == nil {
-				continue
-			}
-			if cs.adjudicated {
-				continue
-			}
-			eff := cs.groundedness
-			for _, dep := range depsByClaim[claimID] {
-				depCS := claimMap[dep.DependsOnID]
-				if depCS == nil {
-					continue
-				}
-				eff *= math.Pow(depCS.effectiveGroundedness, dep.Strength)
-			}
-			delta = math.Max(delta, math.Abs(eff-cs.effectiveGroundedness))
-			cs.effectiveGroundedness = eff
-		}
-
-		// Step 3: Accuracy from effective groundedness
-		for agentID, as := range agentMap {
-			assertions := assertionsByAgent[agentID]
-			if len(assertions) == 0 {
-				continue
-			}
-			var score, totalConf float64
-			for _, a := range assertions {
-				cs := claimMap[a.ClaimID]
-				if cs == nil {
-					continue
-				}
-				switch a.Stance {
-				case "support":
-					score += a.Confidence * cs.effectiveGroundedness
-				case "contest":
-					score += a.Confidence * (1 - cs.effectiveGroundedness)
-				case "refine":
-					if a.RefinementClaimID != nil {
-						refCS := claimMap[*a.RefinementClaimID]
-						if refCS != nil {
-							score += a.Confidence * refCS.effectiveGroundedness
-						}
-					}
-				}
-				totalConf += a.Confidence
-			}
-
-			var rawAcc float64
-			if totalConf > 0 {
-				rawAcc = score / totalConf
-			}
-			newAcc := cfg.DampingFactor*rawAcc + (1-cfg.DampingFactor)*cfg.Prior
-			delta = math.Max(delta, math.Abs(newAcc-as.accuracy))
-			as.accuracy = newAcc
-		}
-
-		// Step 4: Recompute weight
-		for _, as := range agentMap {
-			as.weight = as.contribution * (1 + as.accuracy)
-		}
-
-		if delta < cfg.Epsilon {
+		delta = maxDelta(prev, next)
+		prev = next
+		if delta < cfg.SourceTolerance {
 			iter++
 			break
 		}
 	}
-
-	return iter, delta
+	return prev, iter, delta, nil
 }
 
-// --- Contribution Graph ---
-
-func runContributionGraph(
-	cfg Config,
-	agentMap map[string]*agentState,
-	helpfulness map[string]float64,
-	reviewsByAssertion map[string][]model.Review,
-	reviewsByReviewer map[string][]model.Review,
-	assertionMap map[string]*model.Assertion,
-) (int, float64) {
-	var iter int
-	var delta float64
-
-	for iter = 0; iter < cfg.MaxIterations; iter++ {
-		delta = 0
-
-		// Step 1: Helpfulness from contribution-weighted reviews
-		for assertionID, reviews := range reviewsByAssertion {
-			var weightedSum, totalWeight float64
-			for _, r := range reviews {
-				as := agentMap[r.ReviewerID]
-				if as == nil {
-					continue
+func refreshCitationAuditFactors(store *db.Store) error {
+	citations, err := store.ListAllCitations()
+	if err != nil {
+		return err
+	}
+	for _, c := range citations {
+		audits, err := store.ListAuditsByCitation(c.ID)
+		if err != nil {
+			return err
+		}
+		if len(audits) == 0 {
+			if c.AuditFactor != 1.0 {
+				if err := store.UpdateCitationAuditFactor(c.ID, 1.0); err != nil {
+					return err
 				}
-				weightedSum += r.Helpfulness * as.contribution
-				totalWeight += as.contribution
 			}
-			newH := weightedSum / (totalWeight + cfg.Epsilon)
-			old := helpfulness[assertionID]
-			delta = math.Max(delta, math.Abs(newH-old))
-			helpfulness[assertionID] = newH
-		}
-
-		// Step 2: Contribution-credibility from review alignment
-		for agentID, as := range agentMap {
-			reviews := reviewsByReviewer[agentID]
-			if len(reviews) == 0 {
-				continue
-			}
-			var score float64
-			for _, r := range reviews {
-				consensus := helpfulness[r.AssertionID]
-				agreement := 1.0 - math.Abs(r.Helpfulness-consensus)
-				score += agreement
-			}
-			rawContrib := score / float64(len(reviews))
-			newContrib := cfg.DampingFactor*rawContrib + (1-cfg.DampingFactor)*cfg.Prior
-			delta = math.Max(delta, math.Abs(newContrib-as.contribution))
-			as.contribution = newContrib
-		}
-
-		if delta < cfg.Epsilon {
-			iter++
-			break
-		}
-	}
-
-	return iter, delta
-}
-
-// --- Contestation ---
-
-func computeContestation(assertions []model.Assertion, agentMap map[string]*agentState) float64 {
-	if len(assertions) == 0 {
-		return 0
-	}
-
-	// Contestation = variance of weighted stances
-	var values []float64
-	for _, a := range assertions {
-		as := agentMap[a.AgentID]
-		if as == nil {
 			continue
 		}
-		var stanceSign float64
-		switch a.Stance {
-		case "support":
-			stanceSign = 1.0
-		case "contest":
-			stanceSign = -1.0
-		case "refine":
-			stanceSign = 0.5
+		anyMechFail := false
+		var uphold, total float64
+		for _, a := range audits {
+			if a.Mechanical == "fail" {
+				anyMechFail = true
+				break
+			}
+			total++
+			if a.Verdict == "uphold" {
+				uphold++
+			}
 		}
-		values = append(values, stanceSign*a.Confidence*as.weight)
+		factor := 0.0
+		if !anyMechFail {
+			if total > 0 {
+				factor = uphold / total
+			} else {
+				factor = 1.0
+			}
+		}
+		if err := store.UpdateCitationAuditFactor(c.ID, factor); err != nil {
+			return err
+		}
+		if anyMechFail {
+			if err := store.UpdateCitationStatus(c.ID, "rejected"); err != nil {
+				return err
+			}
+		}
 	}
-
-	if len(values) < 2 {
-		return 0
-	}
-
-	var sum float64
-	for _, v := range values {
-		sum += v
-	}
-	mean := sum / float64(len(values))
-
-	var variance float64
-	for _, v := range values {
-		d := v - mean
-		variance += d * d
-	}
-	variance /= float64(len(values))
-
-	return clamp(variance, 0, 1)
+	return nil
 }
 
-// --- Status Transitions ---
+func computeAgentReliability(store *db.Store, cfg Config) (map[string]float64, int, float64, error) {
+	agents, err := store.ListAgents()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	if len(agents) == 0 {
+		return map[string]float64{}, 0, 0, nil
+	}
 
-func computeStatus(groundedness, effectiveGroundedness, contestation float64, cfg Config) string {
-	if effectiveGroundedness >= cfg.GroundedThreshold && contestation < cfg.ContestedThreshold {
-		return "grounded"
+	citations, err := store.ListAllCitations()
+	if err != nil {
+		return nil, 0, 0, err
 	}
-	if effectiveGroundedness < cfg.RefutedThreshold && contestation < cfg.ContestedThreshold {
-		return "refuted"
+	audits, err := store.ListAllAudits()
+	if err != nil {
+		return nil, 0, 0, err
 	}
-	if contestation >= cfg.ContestedThreshold {
+	auditsByCitation := map[string][]model.Audit{}
+	for _, a := range audits {
+		auditsByCitation[a.CitationID] = append(auditsByCitation[a.CitationID], a)
+	}
+
+	prev := map[string]float64{}
+	for _, a := range agents {
+		prev[a.ID] = cfg.AgentPrior
+	}
+
+	var iter int
+	var delta float64
+	for iter = 0; iter < cfg.AgentMaxIter; iter++ {
+		next := map[string]float64{}
+
+		agentScore := map[string]struct{ num, den float64 }{}
+		for _, c := range citations {
+			audList := auditsByCitation[c.ID]
+			if len(audList) == 0 {
+				continue
+			}
+			for _, ad := range audList {
+				w := prev[ad.AuditorID]
+				if ad.Mechanical == "fail" {
+					w = 1.0
+					s := agentScore[c.ExtractorID]
+					s.den += w
+					agentScore[c.ExtractorID] = s
+					continue
+				}
+				s := agentScore[c.ExtractorID]
+				s.den += w
+				if ad.Verdict == "uphold" {
+					s.num += w
+				}
+				agentScore[c.ExtractorID] = s
+			}
+		}
+
+		for _, a := range agents {
+			s, ok := agentScore[a.ID]
+			score := cfg.AgentPrior
+			if ok && s.den > 0 {
+				score = s.num / s.den
+			}
+			score = (1-cfg.AgentDamping)*score + cfg.AgentDamping*cfg.AgentPrior
+			if score < 0 {
+				score = 0
+			}
+			if score > 1 {
+				score = 1
+			}
+			next[a.ID] = score
+		}
+
+		delta = maxDelta(prev, next)
+		prev = next
+		if delta < cfg.AgentTolerance {
+			iter++
+			break
+		}
+	}
+	return prev, iter, delta, nil
+}
+
+func computeProductivity(store *db.Store, agentID string) float64 {
+	citations, err := store.ListCitationsByExtractor(agentID, 1000, 0)
+	if err != nil {
+		return 0
+	}
+	var upheld float64
+	for _, c := range citations {
+		if c.Status == "active" && c.AuditFactor >= 0.5 {
+			upheld++
+		}
+	}
+	return math.Log1p(upheld)
+}
+
+func classifyStatus(s lens.ClaimScore, cfg Config) string {
+	if s.Contestation >= cfg.ContestedThresh {
 		return "contested"
 	}
-	if groundedness > 0.3 {
-		return "emerging"
+	if s.EffectiveGroundedness >= cfg.GroundedThreshold {
+		return "grounded"
+	}
+	if s.EffectiveGroundedness <= cfg.RefutedThreshold {
+		return "refuted"
 	}
 	return "active"
 }
 
-// --- Topological Sort ---
-
-func topologicalSort(claims []model.Claim, depsByClaim map[string][]model.Dependency) []string {
-	// Kahn's algorithm
-	inDegree := make(map[string]int)
-	for _, c := range claims {
-		inDegree[c.ID] = 0
-	}
-	for _, deps := range depsByClaim {
-		for range deps {
-			// The claim depends on something, so it has incoming edges
+func isAdjudicated(snap *lens.Snapshot, claimID string) bool {
+	for _, c := range snap.Claims {
+		if c.ID == claimID {
+			return c.Status == "adjudicated"
 		}
 	}
-	// Actually: for each dep edge (claim depends_on dep), claim has in-degree += 1
-	for claimID, deps := range depsByClaim {
-		inDegree[claimID] += len(deps)
-	}
-
-	var queue []string
-	for _, c := range claims {
-		if inDegree[c.ID] == 0 {
-			queue = append(queue, c.ID)
-		}
-	}
-
-	// Build reverse index: which claims depend on this claim?
-	dependents := make(map[string][]string)
-	for claimID, deps := range depsByClaim {
-		for _, d := range deps {
-			dependents[d.DependsOnID] = append(dependents[d.DependsOnID], claimID)
-		}
-	}
-
-	var order []string
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		order = append(order, cur)
-
-		for _, dep := range dependents[cur] {
-			inDegree[dep]--
-			if inDegree[dep] == 0 {
-				queue = append(queue, dep)
-			}
-		}
-	}
-
-	return order
+	return false
 }
 
-// --- Helpers ---
-
-func clamp(v, lo, hi float64) float64 {
-	if v < lo {
-		return lo
+func maxDelta(a, b map[string]float64) float64 {
+	var d float64
+	for k, va := range a {
+		vb, ok := b[k]
+		if !ok {
+			continue
+		}
+		x := va - vb
+		if x < 0 {
+			x = -x
+		}
+		if x > d {
+			d = x
+		}
 	}
-	if v > hi {
-		return hi
-	}
-	return v
+	return d
 }

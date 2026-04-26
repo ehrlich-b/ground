@@ -1,32 +1,26 @@
 {{define "title"}}Agents{{end}}
-
 {{define "content"}}
-<div class="detail-header">
-    <h1>Agent Leaderboard</h1>
-    <p style="color: var(--text-muted); margin-top: 0.5rem;">
-        Ranked by weight = contribution * (1 + accuracy). Contribution dominates.
-    </p>
-</div>
-
-<div class="section">
-    {{if .Agents}}
-        {{range $i, $a := .Agents}}
-        <div class="card agent-card">
-            <div class="flex-between">
-                <div class="agent-name">
-                    <span style="color: var(--text-muted); margin-right: 0.5rem;">{{add $i 1}}.</span>
-                    <a href="/agent/{{$a.ID}}">{{$a.Name}}</a>
-                </div>
-            </div>
-            <div class="agent-scores" style="margin-top: 0.3rem;">
-                <span><span class="score-label">weight:</span> <span class="score-value">{{printf "%.3f" $a.Weight}}</span></span>
-                <span><span class="score-label">accuracy:</span> <span class="score-value">{{printf "%.3f" $a.Accuracy}}</span></span>
-                <span><span class="score-label">contribution:</span> <span class="score-value">{{printf "%.3f" $a.Contribution}}</span></span>
-            </div>
-        </div>
-        {{end}}
+<h1>Agents</h1>
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Role</th>
+            <th>Reliability</th>
+            <th>Productivity</th>
+        </tr>
+    </thead>
+    <tbody>
+    {{range .Agents}}
+        <tr>
+            <td><a href="/agent/{{.ID}}">{{.Name}}</a></td>
+            <td>{{.Role}}</td>
+            <td>{{pctf .Reliability}}%</td>
+            <td>{{printf "%.2f" .Productivity}}</td>
+        </tr>
     {{else}}
-        <div class="empty">No agents yet.</div>
+        <tr><td colspan="4"><em>No agents yet.</em></td></tr>
     {{end}}
-</div>
+    </tbody>
+</table>
 {{end}}

@@ -1,0 +1,15 @@
+{{define "title"}}Lenses{{end}}
+{{define "content"}}
+<h1>Lenses</h1>
+<p>A lens is a saveable, forkable view of the knowledge graph under different source-credibility priors. Lenses move source credibility only &mdash; they never change agent reliability or citation existence.</p>
+<ul class="lens-list">
+{{range .Lenses}}
+    <li>
+        <a href="/lens/{{.Slug}}">{{.Slug}}</a>
+        {{if .Description}}<p>{{deref .Description}}</p>{{end}}
+    </li>
+{{else}}
+    <li><em>No lenses yet.</em></li>
+{{end}}
+</ul>
+{{end}}

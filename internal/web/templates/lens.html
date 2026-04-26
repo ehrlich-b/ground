@@ -1,0 +1,37 @@
+{{define "title"}}Lens: {{.Lens.Slug}}{{end}}
+{{define "content"}}
+<h1>Lens: {{.Lens.Slug}}</h1>
+{{if .Lens.Description}}<p>{{deref .Lens.Description}}</p>{{end}}
+
+<h2>Source overrides</h2>
+<table class="data-table">
+    <thead>
+        <tr><th>Source</th><th>Mode</th><th>Value</th></tr>
+    </thead>
+    <tbody>
+    {{range .Overrides}}
+        <tr>
+            <td><a href="/source/{{.SourceID}}">{{.SourceID}}</a></td>
+            <td>{{.Mode}}</td>
+            <td>{{printf "%.2f" .Value}}</td>
+        </tr>
+    {{else}}
+        <tr><td colspan="3"><em>No per-source overrides.</em></td></tr>
+    {{end}}
+    </tbody>
+</table>
+
+<h2>Tag overrides</h2>
+<table class="data-table">
+    <thead>
+        <tr><th>Tag</th><th>Multiplier</th></tr>
+    </thead>
+    <tbody>
+    {{range .TagOverrides}}
+        <tr><td>{{.Tag}}</td><td>{{printf "%.2f" .Multiplier}}</td></tr>
+    {{else}}
+        <tr><td colspan="2"><em>No tag overrides.</em></td></tr>
+    {{end}}
+    </tbody>
+</table>
+{{end}}

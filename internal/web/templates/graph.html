@@ -1,273 +1,38 @@
 {{define "title"}}Graph{{end}}
-
 {{define "content"}}
-<div style="margin: 1rem 0 0.5rem; display: flex; justify-content: space-between; align-items: center;">
-    <div>
-        <h2 style="margin-bottom: 0;">Knowledge Graph</h2>
-        <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0.25rem 0 0;">
-            Force-directed graph of topics, claims, and agents. Drag nodes, scroll to zoom, click to navigate.
-        </p>
-    </div>
-    <div style="display: flex; gap: 0.5rem; font-family: var(--mono); font-size: 0.75rem;">
-        <button class="graph-toggle active" data-type="topic" style="background: var(--accent-subtle); color: var(--accent); border: 1px solid var(--accent-dim);">Topics</button>
-        <button class="graph-toggle active" data-type="claim" style="background: var(--yellow-subtle); color: var(--yellow); border: 1px solid #6d5d15;">Claims</button>
-        <button class="graph-toggle active" data-type="agent" style="background: var(--blue-subtle); color: var(--blue); border: 1px solid var(--blue-dim);">Agents</button>
-        <button class="graph-toggle active" data-type="dependency" style="background: var(--bg-card); color: var(--text-muted); border: 1px solid var(--border);">Dependencies</button>
-        <button class="graph-toggle" data-type="assertion" style="background: var(--bg-card); color: var(--text-muted); border: 1px solid var(--border); opacity: 0.5;">Assertions</button>
-    </div>
-</div>
-
-<div id="graph-container" style="width: 100%; height: calc(100vh - 10rem); background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); position: relative; overflow: hidden;">
-    <div id="graph-loading" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-family: var(--mono);">Loading graph data...</div>
-    <div id="tooltip" style="display: none; position: absolute; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.75rem; font-size: 0.8rem; pointer-events: none; z-index: 10; max-width: 300px;"></div>
-</div>
-
+<h1>Knowledge Graph</h1>
+<p>D3 force-directed visualization of claims, sources, and dependencies.</p>
+<div id="graph-container" style="width: 100%; height: 700px; border: 1px solid var(--border, #444);"></div>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
-(function() {
-    const container = document.getElementById('graph-container');
-    const tooltip = document.getElementById('tooltip');
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-
-    // Track which layers are visible
-    const visible = { topic: true, claim: true, agent: true, dependency: true, assertion: false };
-
-    document.querySelectorAll('.graph-toggle').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const type = btn.dataset.type;
-            visible[type] = !visible[type];
-            btn.classList.toggle('active');
-            btn.style.opacity = visible[type] ? '1' : '0.5';
-            updateVisibility();
-        });
+fetch('/api/graph').then(r => r.json()).then(({data}) => {
+    const {nodes, links} = data;
+    const width = document.getElementById('graph-container').clientWidth;
+    const height = 700;
+    const svg = d3.select('#graph-container').append('svg').attr('width', width).attr('height', height);
+    const simulation = d3.forceSimulation(nodes)
+        .force('link', d3.forceLink(links).id(d => d.id).distance(80))
+        .force('charge', d3.forceManyBody().strength(-200))
+        .force('center', d3.forceCenter(width/2, height/2));
+    const link = svg.append('g').selectAll('line').data(links).join('line')
+        .attr('stroke', d => {
+            if (d.type === 'citation') return d.polarity === 'contradicts' ? '#e57373' : d.polarity === 'qualifies' ? '#fbc02d' : '#81c784';
+            if (d.type === 'dependency') return '#90caf9';
+            return '#ccc';
+        })
+        .attr('stroke-width', 1.5);
+    const node = svg.append('g').selectAll('circle').data(nodes).join('circle')
+        .attr('r', d => d.type === 'claim' ? 8 : 5)
+        .attr('fill', d => d.type === 'claim' ? '#39d353' : d.type === 'source' ? '#ffa000' : '#888')
+        .call(d3.drag()
+            .on('start', (e,d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+            .on('drag', (e,d) => { d.fx = e.x; d.fy = e.y; })
+            .on('end', (e,d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }));
+    node.append('title').text(d => d.label);
+    simulation.on('tick', () => {
+        link.attr('x1', d => d.source.x).attr('y1', d => d.source.y).attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+        node.attr('cx', d => d.x).attr('cy', d => d.y);
     });
-
-    const svg = d3.select('#graph-container')
-        .append('svg')
-        .attr('width', width)
-        .attr('height', height);
-
-    const g = svg.append('g');
-
-    // Zoom
-    svg.call(d3.zoom()
-        .scaleExtent([0.1, 4])
-        .on('zoom', (event) => g.attr('transform', event.transform)));
-
-    // Colors
-    const nodeColor = (d) => {
-        if (d.type === 'topic') return '#39d353';
-        if (d.type === 'agent') return '#58a6ff';
-        // Claims by groundedness
-        if (d.status === 'adjudicated') return '#39d353';
-        if (d.value >= 0.7) return '#39d353';
-        if (d.value >= 0.4) return '#e3b341';
-        return '#f85149';
-    };
-
-    const nodeRadius = (d) => {
-        if (d.type === 'topic') return 16;
-        if (d.type === 'agent') return 4 + Math.max(d.value, 0.3) * 6;
-        return 5 + d.value * 4;
-    };
-
-    const linkColor = (d) => {
-        if (d.type === 'dependency') return '#8b949e';
-        if (d.type === 'proximity') return '#30363d';
-        if (d.stance === 'support') return '#238636';
-        if (d.stance === 'contest') return '#da3633';
-        if (d.stance === 'refine') return '#1f6feb';
-        return '#30363d';
-    };
-
-    const linkOpacity = (d) => {
-        if (d.type === 'proximity') return 0.15;
-        if (d.type === 'assertion') return 0.3;
-        return 0.5;
-    };
-
-    const linkWidth = (d) => {
-        if (d.type === 'dependency') return 1 + d.value * 2;
-        if (d.type === 'proximity') return 0.5;
-        return 0.75;
-    };
-
-    fetch('/api/graph')
-        .then(r => r.json())
-        .then(resp => {
-            document.getElementById('graph-loading').style.display = 'none';
-            const data = resp.data;
-            if (!data.nodes || data.nodes.length === 0) {
-                document.getElementById('graph-loading').style.display = 'flex';
-                document.getElementById('graph-loading').textContent = 'No data yet. Seed the system first.';
-                return;
-            }
-            renderGraph(data);
-        })
-        .catch(() => {
-            document.getElementById('graph-loading').textContent = 'Failed to load graph data.';
-        });
-
-    function renderGraph(data) {
-        const nodes = data.nodes;
-        const links = data.links.filter(l => {
-            // Ensure both source and target exist
-            return nodes.find(n => n.id === l.source) && nodes.find(n => n.id === l.target);
-        });
-
-        const simulation = d3.forceSimulation(nodes)
-            .force('link', d3.forceLink(links).id(d => d.id).distance(d => {
-                if (d.type === 'proximity') return 80;
-                if (d.type === 'dependency') return 60;
-                return 100;
-            }).strength(d => {
-                if (d.type === 'proximity') return 0.1;
-                if (d.type === 'dependency') return 0.3;
-                return 0.05;
-            }))
-            .force('charge', d3.forceManyBody().strength(d => {
-                if (d.type === 'topic') return -300;
-                if (d.type === 'agent') return -50;
-                return -80;
-            }))
-            .force('center', d3.forceCenter(width / 2, height / 2))
-            .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 2));
-
-        // Links
-        const link = g.append('g')
-            .selectAll('line')
-            .data(links)
-            .join('line')
-            .attr('stroke', linkColor)
-            .attr('stroke-opacity', linkOpacity)
-            .attr('stroke-width', linkWidth)
-            .attr('class', d => 'graph-link link-' + d.type);
-
-        // Nodes
-        const node = g.append('g')
-            .selectAll('circle')
-            .data(nodes)
-            .join('circle')
-            .attr('r', nodeRadius)
-            .attr('fill', nodeColor)
-            .attr('stroke', d => d.type === 'topic' ? '#e6edf3' : 'none')
-            .attr('stroke-width', d => d.type === 'topic' ? 1.5 : 0)
-            .attr('class', d => 'graph-node node-' + d.type)
-            .style('cursor', 'pointer')
-            .call(drag(simulation));
-
-        // Labels for topics only
-        const label = g.append('g')
-            .selectAll('text')
-            .data(nodes.filter(d => d.type === 'topic'))
-            .join('text')
-            .text(d => d.label.length > 25 ? d.label.slice(0, 22) + '...' : d.label)
-            .attr('font-size', '9px')
-            .attr('font-family', 'var(--mono)')
-            .attr('fill', '#8b949e')
-            .attr('text-anchor', 'middle')
-            .attr('dy', d => nodeRadius(d) + 12)
-            .attr('class', 'graph-label node-topic');
-
-        // Tooltip
-        node.on('mouseover', (event, d) => {
-            let html = '<strong style="color: var(--text-heading);">' + escapeHtml(d.label.length > 80 ? d.label.slice(0, 77) + '...' : d.label) + '</strong>';
-            if (d.type === 'claim') {
-                html += '<br><span style="color: var(--text-muted);">groundedness: ' + (d.value * 100).toFixed(1) + '% &middot; ' + d.status + '</span>';
-            } else if (d.type === 'agent') {
-                html += '<br><span style="color: var(--text-muted);">weight: ' + d.value.toFixed(3) + '</span>';
-            } else if (d.type === 'topic') {
-                html += '<br><span style="color: var(--text-muted);">topic</span>';
-            }
-            tooltip.innerHTML = html;
-            tooltip.style.display = 'block';
-            tooltip.style.left = (event.offsetX + 12) + 'px';
-            tooltip.style.top = (event.offsetY - 8) + 'px';
-        })
-        .on('mousemove', (event) => {
-            tooltip.style.left = (event.offsetX + 12) + 'px';
-            tooltip.style.top = (event.offsetY - 8) + 'px';
-        })
-        .on('mouseout', () => { tooltip.style.display = 'none'; })
-        .on('click', (event, d) => {
-            const prefix = d.id.slice(0, 2);
-            const id = d.id.slice(2);
-            if (prefix === 't:') window.location = '/topic/' + encodeURIComponent(nodes.find(n => n.id === d.id)?.label?.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || id);
-            else if (prefix === 'c:') window.location = '/claim/' + id;
-            else if (prefix === 'a:') window.location = '/agent/' + id;
-        });
-
-        simulation.on('tick', () => {
-            link
-                .attr('x1', d => d.source.x)
-                .attr('y1', d => d.source.y)
-                .attr('x2', d => d.target.x)
-                .attr('y2', d => d.target.y);
-            node
-                .attr('cx', d => d.x)
-                .attr('cy', d => d.y);
-            label
-                .attr('x', d => d.x)
-                .attr('y', d => d.y);
-        });
-
-        // Make update function available
-        window._graphNodes = node;
-        window._graphLinks = link;
-        window._graphLabels = label;
-        updateVisibility();
-    }
-
-    function updateVisibility() {
-        if (!window._graphNodes) return;
-        window._graphNodes.style('display', d => visible[d.type] ? null : 'none');
-        window._graphLinks.style('display', d => {
-            if (d.type === 'proximity') return visible.topic && visible.claim ? null : 'none';
-            if (d.type === 'dependency') return visible.claim ? null : 'none';
-            if (d.type === 'assertion') return visible.assertion && visible.agent && visible.claim ? null : 'none';
-            return null;
-        });
-        window._graphLabels.style('display', d => visible.topic ? null : 'none');
-    }
-
-    function drag(simulation) {
-        return d3.drag()
-            .on('start', (event, d) => {
-                if (!event.active) simulation.alphaTarget(0.3).restart();
-                d.fx = d.x;
-                d.fy = d.y;
-            })
-            .on('drag', (event, d) => {
-                d.fx = event.x;
-                d.fy = event.y;
-            })
-            .on('end', (event, d) => {
-                if (!event.active) simulation.alphaTarget(0);
-                d.fx = null;
-                d.fy = null;
-            });
-    }
-
-    function escapeHtml(s) {
-        const div = document.createElement('div');
-        div.textContent = s;
-        return div.innerHTML;
-    }
-})();
+});
 </script>
-
-<style>
-    .graph-toggle {
-        padding: 0.3em 0.6em;
-        border-radius: 4px;
-        cursor: pointer;
-        font-family: var(--mono);
-        font-size: 0.75rem;
-        transition: opacity 0.15s;
-    }
-    .graph-toggle:hover {
-        filter: brightness(1.2);
-    }
-</style>
 {{end}}
