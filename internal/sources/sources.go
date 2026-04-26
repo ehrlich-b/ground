@@ -3,12 +3,13 @@
 package sources
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
+	nurl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +17,12 @@ import (
 
 	"github.com/ehrlich-b/ground/internal/db"
 	"github.com/ehrlich-b/ground/internal/model"
+	readability "github.com/go-shiori/go-readability"
 )
+
+// MinReadableTextLength is the threshold below which extracted text is treated
+// as a likely paywall/JS-wall and the source is flagged unverifiable.
+const MinReadableTextLength = 400
 
 // BlobStore is content-addressed storage for source bodies.
 type BlobStore interface {
@@ -66,13 +72,18 @@ func (b *FileBlobStore) Get(blobID string) ([]byte, error) {
 	return os.ReadFile(filepath.Join(b.root, blobID))
 }
 
-// Fetcher pulls a URL and returns extracted text body + a content-type hint.
-type Fetcher interface {
-	Fetch(url string) (body []byte, contentType string, err error)
+// FetchResult is the raw output of a Fetcher.
+type FetchResult struct {
+	Raw         []byte
+	ContentType string
 }
 
-// HTTPFetcher does a simple HTTP GET. It does NOT do readability extraction or PDF
-// parsing yet; that's Phase 2 follow-up work. For MVP it returns the raw response body.
+// Fetcher pulls a URL and returns the raw response bytes + a content-type hint.
+type Fetcher interface {
+	Fetch(url string) (*FetchResult, error)
+}
+
+// HTTPFetcher does an HTTP GET with a timeout and a 10MB cap.
 type HTTPFetcher struct {
 	Client  *http.Client
 	Timeout time.Duration
@@ -85,28 +96,80 @@ func NewHTTPFetcher() *HTTPFetcher {
 	}
 }
 
-func (f *HTTPFetcher) Fetch(rawURL string) ([]byte, string, error) {
-	if _, err := url.Parse(rawURL); err != nil {
-		return nil, "", fmt.Errorf("parse url: %w", err)
+func (f *HTTPFetcher) Fetch(rawURL string) (*FetchResult, error) {
+	if _, err := nurl.Parse(rawURL); err != nil {
+		return nil, fmt.Errorf("parse url: %w", err)
 	}
 	req, err := http.NewRequest("GET", rawURL, nil)
 	if err != nil {
-		return nil, "", fmt.Errorf("create request: %w", err)
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("User-Agent", "ground/0.1 (research-agent)")
 	resp, err := f.Client.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("fetch: %w", err)
+		return nil, fmt.Errorf("fetch: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return nil, "", fmt.Errorf("fetch %s: status %d", rawURL, resp.StatusCode)
+		return nil, fmt.Errorf("fetch %s: status %d", rawURL, resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10MB cap
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
-		return nil, "", fmt.Errorf("read body: %w", err)
+		return nil, fmt.Errorf("read body: %w", err)
 	}
-	return body, resp.Header.Get("Content-Type"), nil
+	return &FetchResult{Raw: body, ContentType: resp.Header.Get("Content-Type")}, nil
+}
+
+// ExtractedBody is the readable text used as the source body for the mechanical
+// wall, plus optional metadata recovered during extraction.
+type ExtractedBody struct {
+	Text     []byte
+	Title    string
+	Excerpt  string
+	SiteName string
+	// Unverifiable marks pages whose readable text was below the paywall
+	// threshold. Citations against unverifiable bodies still need to mechanically
+	// match; the engine separately floors their credibility.
+	Unverifiable bool
+}
+
+// ExtractBody turns raw fetched bytes into the canonical text body that
+// citation verbatim quotes are checked against. HTML runs through readability;
+// PDFs and unknown types are passed through verbatim for now.
+func ExtractBody(raw []byte, contentType, rawURL, srcType string) (*ExtractedBody, error) {
+	switch srcType {
+	case "html", "arxiv", "pubmed":
+		return extractHTML(raw, rawURL)
+	case "plain":
+		return &ExtractedBody{Text: raw}, nil
+	default:
+		return &ExtractedBody{Text: raw}, nil
+	}
+}
+
+func extractHTML(raw []byte, rawURL string) (*ExtractedBody, error) {
+	pageURL, err := nurl.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse url: %w", err)
+	}
+	article, err := readability.FromReader(bytes.NewReader(raw), pageURL)
+	if err != nil {
+		return &ExtractedBody{Text: raw, Unverifiable: true}, nil
+	}
+	text := strings.TrimSpace(article.TextContent)
+	if text == "" {
+		return &ExtractedBody{Text: raw, Unverifiable: true}, nil
+	}
+	out := &ExtractedBody{
+		Text:     []byte(text),
+		Title:    strings.TrimSpace(article.Title),
+		Excerpt:  strings.TrimSpace(article.Excerpt),
+		SiteName: strings.TrimSpace(article.SiteName),
+	}
+	if len(out.Text) < MinReadableTextLength {
+		out.Unverifiable = true
+	}
+	return out, nil
 }
 
 // Ingester wires Fetcher + BlobStore + Store to ingest a URL into Ground.
@@ -123,24 +186,34 @@ type IngestResult struct {
 	Reused bool
 }
 
-// Ingest fetches the URL (if not already cached), stores its body content-addressed,
-// and persists a Source row. If a source with the same content_hash already exists,
-// it returns that source and Reused=true.
+// Ingest fetches the URL (if not already cached), runs body extraction so the
+// mechanical wall checks against readable text rather than raw HTML, stores the
+// extracted body content-addressed, and persists a Source row. Identical
+// extracted bodies dedup by content_hash even across different URLs.
 func (in *Ingester) Ingest(rawURL string) (*IngestResult, error) {
-	body, contentType, err := in.Fetcher.Fetch(rawURL)
+	fetched, err := in.Fetcher.Fetch(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch: %w", err)
 	}
-	sha, blobID, err := in.Blobs.Put(body)
+
+	srcType := guessSourceType(rawURL, fetched.ContentType)
+	extracted, err := ExtractBody(fetched.Raw, fetched.ContentType, rawURL, srcType)
+	if err != nil {
+		return nil, fmt.Errorf("extract: %w", err)
+	}
+
+	sha, blobID, err := in.Blobs.Put(extracted.Text)
 	if err != nil {
 		return nil, fmt.Errorf("store blob: %w", err)
 	}
 
 	if existing, err := in.Store.GetSourceByContentHash(sha); err == nil && existing != nil {
-		return &IngestResult{Source: existing, Body: body, Reused: true}, nil
+		return &IngestResult{Source: existing, Body: extracted.Text, Reused: true}, nil
 	}
 
-	srcType := guessSourceType(rawURL, contentType)
+	if extracted.Unverifiable {
+		srcType = "unverifiable"
+	}
 	src := &model.Source{
 		ID:          db.GenerateID(),
 		URL:         rawURL,
@@ -148,6 +221,10 @@ func (in *Ingester) Ingest(rawURL string) (*IngestResult, error) {
 		BodyBlobID:  blobID,
 		FetchedAt:   time.Now().UTC(),
 		Type:        srcType,
+	}
+	if extracted.Title != "" {
+		t := extracted.Title
+		src.Title = &t
 	}
 	if err := in.Store.CreateSource(src); err != nil {
 		return nil, fmt.Errorf("create source: %w", err)
@@ -159,7 +236,7 @@ func (in *Ingester) Ingest(rawURL string) (*IngestResult, error) {
 		}
 	}
 
-	return &IngestResult{Source: src, Body: body, Reused: false}, nil
+	return &IngestResult{Source: src, Body: extracted.Text, Reused: false}, nil
 }
 
 // LoadBody reads the cached body for a source.
@@ -212,7 +289,7 @@ func autoTags(rawURL, srcType string) []string {
 }
 
 func parseHost(rawURL string) string {
-	u, err := url.Parse(rawURL)
+	u, err := nurl.Parse(rawURL)
 	if err != nil {
 		return ""
 	}
