@@ -34,52 +34,12 @@ fi
 # Stop service before swapping
 systemctl stop ground 2>/dev/null || true
 
-# Swap binary
+# Swap binary. Plumbing (systemd unit, nginx vhost) is owned by ~/repos/infra.
 mv /opt/ground-bin.new /opt/ground-bin
 
-# Systemd service
-cat > /etc/systemd/system/ground.service <<'SVC'
-[Unit]
-Description=ground.ehrlich.dev
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/opt/ground-bin serve --port 8081 --db /root/.ground/ground.db
-EnvironmentFile=/root/.ground/env
-Environment=HOME=/root
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-SVC
-
-systemctl daemon-reload
-systemctl enable ground
 systemctl restart ground
 sleep 1
 systemctl is-active ground
-
-# Nginx
-cat > /etc/nginx/sites-enabled/ground.ehrlich.dev.conf <<'NGX'
-server {
-    listen 80;
-    listen [::]:80;
-
-    server_name ground.ehrlich.dev;
-
-    location / {
-        proxy_pass http://127.0.0.1:8081;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-NGX
-
-nginx -t && systemctl reload nginx
 echo "=== deployed ==="
 REMOTE
 
