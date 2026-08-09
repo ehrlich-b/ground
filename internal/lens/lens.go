@@ -6,6 +6,8 @@
 package lens
 
 import (
+	"fmt"
+	"math"
 	"sort"
 
 	"github.com/ehrlich-b/ground/internal/db"
@@ -120,10 +122,25 @@ func LoadLensSpec(store *db.Store, lensID string) (*LensSpec, error) {
 
 // Render computes lens-adjusted ClaimScore for every claim in the snapshot.
 func Render(snap *Snapshot, spec *LensSpec) map[string]ClaimScore {
-	cred := mergeCredibility(snap, spec)
-	scores := computeIntrinsic(snap, cred)
-	applyDAGFlow(snap, scores)
+	scores, _ := render(snap, spec)
 	return scores
+}
+
+// RenderChecked is like Render but surfaces dependency cycles as an error.
+// On error the returned map retains the intrinsic scores; the DAG flow is not
+// applied because a topological order is impossible.
+func RenderChecked(snap *Snapshot, spec *LensSpec) (map[string]ClaimScore, error) {
+	return render(snap, spec)
+}
+
+func render(snap *Snapshot, spec *LensSpec) (map[string]ClaimScore, error) {
+	cred := mergeCredibility(snap, spec)
+	adj := adjudicatedMap(snap)
+	scores := computeIntrinsic(snap, cred, adj)
+	if err := applyDAGFlow(snap, scores, adj); err != nil {
+		return scores, err
+	}
+	return scores, nil
 }
 
 // RenderClaim is a one-claim variant; same cost as Render but focused output.
@@ -198,7 +215,7 @@ func mergeCredibility(snap *Snapshot, spec *LensSpec) map[string]float64 {
 	return cred
 }
 
-func computeIntrinsic(snap *Snapshot, cred map[string]float64) map[string]ClaimScore {
+func computeIntrinsic(snap *Snapshot, cred map[string]float64, adj map[string]bool) map[string]ClaimScore {
 	scores := make(map[string]ClaimScore, len(snap.Claims))
 	for _, c := range snap.Claims {
 		s := ClaimScore{ClaimID: c.ID}
@@ -236,7 +253,7 @@ func computeIntrinsic(snap *Snapshot, cred map[string]float64) map[string]ClaimS
 
 	for cid, a := range aggs {
 		s := scores[cid]
-		if scores[cid].Groundedness == 0 || (s.ClaimID != "" && !isAdjudicated(snap, cid)) {
+		if scores[cid].Groundedness == 0 || (s.ClaimID != "" && !adj[cid]) {
 			if a.magnitude == 0 {
 				s.Groundedness = 0.5
 			} else {
@@ -257,16 +274,18 @@ func computeIntrinsic(snap *Snapshot, cred map[string]float64) map[string]ClaimS
 	return scores
 }
 
-func isAdjudicated(snap *Snapshot, claimID string) bool {
+// adjudicatedMap precomputes the adjudicated status of every claim once, so the
+// per-claim loops in computeIntrinsic and applyDAGFlow are O(1) lookups instead
+// of linear scans over snap.Claims.
+func adjudicatedMap(snap *Snapshot) map[string]bool {
+	adj := make(map[string]bool, len(snap.Claims))
 	for _, c := range snap.Claims {
-		if c.ID == claimID {
-			return c.Status == "adjudicated"
-		}
+		adj[c.ID] = c.Status == "adjudicated"
 	}
-	return false
+	return adj
 }
 
-func applyDAGFlow(snap *Snapshot, scores map[string]ClaimScore) {
+func applyDAGFlow(snap *Snapshot, scores map[string]ClaimScore, adj map[string]bool) error {
 	// Build adjacency: claim -> deps (depends_on)
 	deps := map[string][]model.Dependency{}
 	in := map[string]int{}
@@ -301,13 +320,27 @@ func applyDAGFlow(snap *Snapshot, scores map[string]ClaimScore) {
 		}
 	}
 
+	// Any node that never reached in-degree 0 is stuck in a dependency cycle:
+	// Kahn's algorithm cannot order it, so it would silently keep
+	// EffectiveGroundedness == Groundedness. Surface that as an error instead.
+	if len(order) != len(all) {
+		stuck := make([]string, 0, len(all)-len(order))
+		for cid := range all {
+			if in[cid] > 0 {
+				stuck = append(stuck, cid)
+			}
+		}
+		sort.Strings(stuck)
+		return fmt.Errorf("dependency cycle detected: %d of %d claims stuck in a cycle: %v", len(stuck), len(all), stuck)
+	}
+
 	for _, cid := range order {
 		ds := deps[cid]
 		if len(ds) == 0 {
 			continue
 		}
 		s := scores[cid]
-		if isAdjudicated(snap, cid) {
+		if adj[cid] {
 			continue
 		}
 		// Effective groundedness multiplied through dependency floor.
@@ -320,6 +353,7 @@ func applyDAGFlow(snap *Snapshot, scores map[string]ClaimScore) {
 		s.EffectiveGroundedness = s.Groundedness * factor
 		scores[cid] = s
 	}
+	return nil
 }
 
 func polarityCoef(p string) float64 {
@@ -349,9 +383,7 @@ func maxf(a, b float64) float64 {
 	return b
 }
 
-// powApprox computes a^b without importing math; b is in [0,1] typically.
-// Falls back to exp(b * ln(a)) via series only when needed; for our domain,
-// linear interpolation between 1 (b=0) and a (b=1) is close enough.
+// powApprox computes a^b. a is clamped to [0,1]; b is typically in [0,1].
 func powApprox(a, b float64) float64 {
 	if a < 0 {
 		a = 0
@@ -359,11 +391,5 @@ func powApprox(a, b float64) float64 {
 	if a > 1 {
 		a = 1
 	}
-	if b <= 0 {
-		return 1
-	}
-	if b >= 1 {
-		return a
-	}
-	return 1 - b*(1-a)
+	return math.Pow(a, b)
 }
